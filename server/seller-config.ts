@@ -85,7 +85,7 @@ const SellerConfigSchema = z.object({
     .prefault({}),
   media: z
     .object({
-      galleryCount: z.number().int().min(0).max(4).default(2),
+      galleryCount: z.number().int().min(0).max(4).default(3),
       detailPanelCount: z.number().int().min(0).max(8).default(6),
       /*
         품질은 **샷당 지연을 지배하는 유일한 축**이다 (2026-08-02 gpt-image-2 실측,
