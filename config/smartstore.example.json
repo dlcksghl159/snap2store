@@ -1,0 +1,49 @@
+{
+  "categoryOverrides": [],
+  "delivery": {
+    "deliveryCompany": "CJGLS",
+    "deliveryFeeType": "FREE",
+    "baseFee": 0,
+    "freeConditionalAmount": null
+  },
+  "afterService": {
+    "telephoneNumber": "REPLACE_WITH_REAL_PHONE",
+    "guideContent": "판매자에게 문의해주세요",
+    "director": "판매자 문의"
+  },
+  "origin": {
+    "mode": "fixed",
+    "fallbackPolicy": "default",
+    "originAreaCode": "00",
+    "content": "국산",
+    "importer": "수입자에게 문의"
+  },
+  "noticeDefaults": {
+    "returnCostReason": "초기불량, 오배송에 한해 무료반품",
+    "noRefundReason": "개봉 후 사용한 상품은 교환/반품 불가",
+    "qualityAssuranceStandard": "소비자분쟁해결기준에 따름",
+    "compensationProcedure": "소비자분쟁해결기준에 따름",
+    "troubleShootingContents": "판매자 문의"
+  },
+  "product": {
+    "manufacturer": "상세페이지 참조",
+    "modelName": "상세페이지 참조",
+    "minorPurchasable": true,
+    "stockQuantityDefault": 20,
+    "maxPurchaseQuantityPerId": 99,
+    "maxPurchaseQuantityPerOrder": 99
+  },
+  "pricing": {
+    "displayUnit": 100,
+    "anchor": "conservative",
+    "minSalePrice": 1000,
+    "fallbackPolicy": "review"
+  },
+  "customs": { "customsTaxType": "INCLUDED" },
+  "media": {
+    "galleryCount": 2,
+    "detailPanelCount": 6,
+    "quality": "low",
+    "mainQuality": "medium"
+  }
+}

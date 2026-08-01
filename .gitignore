@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+data/runtime/
+data/cache/
+data/.test-runtime/
+config/smartstore.local.json
+spec/
+HOW-TO-USE.md
+.claude/
+*.tsbuildinfo
+.DS_Store
+
+# 로컬 QA 하네스 (제품 코드 아님)
+.qa/
