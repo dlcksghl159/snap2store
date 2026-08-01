@@ -57,8 +57,9 @@
   --shadow-pop: 0 4px 12px rgba(25, 31, 40, 0.08), 0 16px 48px rgba(25, 31, 40, 0.16);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  /* 오버슈트-정착. 완료의 한 방과 슬롯 장착에만 쓴다. */
-  --ease-settle: cubic-bezier(0.34, 1.42, 0.5, 1);
+  /* ⚠ 오버슈트는 **키프레임에만** 둔다 (헤드라인 1.015 스케일, 도장 2→1).
+     타이밍 함수까지 탄성 커브를 쓰면 이중 바운스가 되어 고무처럼 읽힌다 —
+     실제 물체는 매끄럽게 감속한다. 변형 전환은 전부 --ease-out. */
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur: 240ms;
 
@@ -616,7 +617,7 @@ textarea {
   place-items: center;
   color: var(--blue);
   flex: 0 0 auto;
-  transition: transform 260ms var(--ease-settle);
+  transition: transform 260ms var(--ease-out);
 }
 
 .drop:hover .drop-icon {
@@ -1022,7 +1023,7 @@ textarea {
   background: var(--green-soft);
   border-radius: 999px;
   padding: 3px 9px;
-  animation: slot-settle 420ms var(--ease-settle) both;
+  animation: slot-settle 420ms var(--ease-out) both;
 }
 
 .vig-note {
@@ -1142,7 +1143,7 @@ textarea {
 }
 
 .stage-lede h2.finish {
-  animation: headline-finish 640ms var(--ease-settle) both;
+  animation: headline-finish 640ms var(--ease-out) both;
 }
 
 .stage-lede p {
@@ -1451,7 +1452,7 @@ textarea {
 }
 
 .slot.is-filled {
-  animation: slot-settle 420ms var(--ease-settle) both;
+  animation: slot-settle 420ms var(--ease-out) both;
 }
 
 .slot.is-filled::after {
@@ -1572,7 +1573,7 @@ textarea {
 }
 
 .title-swap {
-  animation: slot-settle 460ms var(--ease-settle) both;
+  animation: slot-settle 460ms var(--ease-out) both;
 }
 
 .tag-row {
@@ -1704,7 +1705,7 @@ textarea {
   letter-spacing: 0.02em;
   background: rgba(14, 15, 18, 0.72);
   backdrop-filter: blur(2px);
-  animation: stamp-land 620ms var(--ease-settle) both;
+  animation: stamp-land 620ms var(--ease-out) both;
   pointer-events: none;
   display: grid;
   justify-items: center;
