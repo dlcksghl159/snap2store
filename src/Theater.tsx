@@ -204,6 +204,7 @@ export function MissionControl({
           complete={terminalStatus === "registered"}
           live={liveRegistered}
           targetSlot={reveal.targetSlot}
+          heldSlots={reveal.heldSlots}
           registerSlot={registerSlot}
         />
         {reveal.card ? <div className="reveal-scrim" /> : null}

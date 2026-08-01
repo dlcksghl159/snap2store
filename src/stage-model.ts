@@ -58,6 +58,21 @@ export interface FeedCard {
   order?: number;
 }
 
+/** 리빌 카드가 "어느 칸으로 들어가는지"를 도착 전에 말한다. */
+export function slotLabel(slot: string | null): string | null {
+  if (!slot) return null;
+  if (slot === "thumb") return "대표 이미지";
+  if (slot.startsWith("gallery-")) return "추가 컷";
+  if (slot === "crumb") return "카테고리";
+  if (slot === "title") return "상품명";
+  if (slot === "price") return "판매가";
+  if (slot === "tags") return "검색 태그";
+  if (slot === "meta") return "필수 표시 항목";
+  if (slot === "plan") return "상세페이지";
+  if (slot.startsWith("panel-")) return `상세 ${Number(slot.slice(6)) + 1}컷`;
+  return null;
+}
+
 /** 슬롯이 서사 위치를 이미 말해 준다 — 예외인 카드만 order 를 직접 준다. */
 export function revealOrderForSlot(slot: string | null): number {
   if (!slot) return REVEAL_ORDER.other;

@@ -1747,12 +1747,42 @@ textarea {
   will-change: transform, opacity;
 }
 
+.reveal-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .reveal-kicker {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--stage-amber);
   text-transform: uppercase;
+}
+
+.reveal-dest {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--stage-faint);
+  border: 1px solid var(--stage-line);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.detail-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--stage-dim);
+}
+
+.slot-detail-head .detail-head {
+  width: 100%;
 }
 
 .reveal-content {

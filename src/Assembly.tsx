@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ControlDerived, FeedCard } from "./stage-model";
-import { REVEAL_ORDER, ROLE_LABEL } from "./stage-model";
+import { REVEAL_ORDER, ROLE_LABEL, slotLabel } from "./stage-model";
 
 /* ═════════ 조립 틀 ═════════
    스마트스토어 상품 페이지 모양의 틀. 빈 슬롯이 스스로 칸 이름을 말한다 — 회색 사각형 금지. */
@@ -59,6 +59,8 @@ export interface ListingFrameProps {
   complete: boolean;
   live: boolean;
   targetSlot: string | null;
+  /** 아직 리빌이 장착하지 않은 슬롯 — 데이터가 있어도 비워 둔다. */
+  heldSlots: Set<string>;
   registerSlot: (key: string, node: HTMLElement | null) => void;
 }
 
@@ -69,16 +71,23 @@ export function ListingFrame({
   complete,
   live,
   targetSlot,
+  heldSlots,
   registerSlot,
 }: ListingFrameProps) {
+  /** 리빌이 장착하기 전에는 칸을 채우지 않는다 — 그래야 착지점 사전 점등이 읽힌다. */
+  const shows = (slot: string, hasData: boolean): boolean => hasData && !heldSlots.has(slot);
   const main = derived.shots.find((shot) => shot.index === 0) ?? null;
   const gallery = derived.shots.filter((shot) => shot.index > 0);
   const crumbParts = (derived.categoryPath ?? "").split(">").map((part) => part.trim()).filter(Boolean);
 
-  // 상품명 2단 착지 — 처음 꽂히는 값은 상품명이 아니라 인식한 상품군이다.
-  const provisional = derived.productGroup;
+  /**
+   * ⚠ 상품명은 **확정될 때까지 띄우지 않는다**.
+   * 임시로 상품군을 꽂아 두면 관객이 그걸 완성된 상품명으로 읽고
+   * "이름 참 허접하네"로 판단해 버린다 — 나중에 바뀌어도 첫인상은 안 돌아온다.
+   * 대신 빈 슬롯이 무엇을 기다리는지 말한다.
+   */
   const settled = finalTitle ?? derived.seoTitle;
-  const titleFilled = Boolean(provisional || settled);
+  const titleFilled = Boolean(settled);
 
   return (
     <div className="frame">
@@ -106,7 +115,7 @@ export function ListingFrame({
           <Slot
             slotKey="thumb"
             className="slot-thumb"
-            filled={Boolean(main)}
+            filled={shows("thumb", Boolean(main))}
             target={targetSlot === "thumb"}
             ghostTitle="대표 이미지"
             ghostHint="검색 결과에 뜨는 첫 얼굴"
@@ -123,7 +132,7 @@ export function ListingFrame({
                   key={index}
                   slotKey={`gallery-${index}`}
                   className="slot-gal"
-                  filled={Boolean(shot)}
+                  filled={shows(`gallery-${index}`, Boolean(shot))}
                   target={targetSlot === `gallery-${index}`}
                   ghostTitle="추가 컷"
                   register={registerSlot}
@@ -136,12 +145,14 @@ export function ListingFrame({
 
         </div>
 
-        {/* 상세 밴드는 틀 전체 폭을 쓴다 — media 안에 두면 갤러리와 행이 충돌한다. */}
+        {/* 상세 밴드는 틀 전체 폭을 쓴다 — media 안에 두면 갤러리와 행이 충돌한다.
+            ⚠ 기획 문구(컨셉·각도)를 틀에 상시 노출하지 않는다 — 틀은 등록 칸이 채워지는
+            화면이지 기획서가 아니다. 컨셉은 리빌 카드와 결과 화면에서 한 번씩 말한다. */}
         <div className="frame-detail">
           <Slot
             slotKey="plan"
-            className="slot-text"
-            filled={Boolean(derived.plan)}
+            className="slot-text slot-detail-head"
+            filled={shows("plan", Boolean(derived.plan))}
             target={targetSlot === "plan"}
             ghostTitle="상세페이지"
             ghostHint="본문 — 구매를 결정짓는 자리"
@@ -149,9 +160,11 @@ export function ListingFrame({
           >
             {derived.plan ? (
               <div className="detail-head">
-                <b>상세 기획</b>
-                <span className="detail-concept">{derived.plan.concept}</span>
-                <span className="detail-angle">{derived.plan.angle}</span>
+                <b>상세페이지</b>
+                <span className="detail-angle">본문 — 구매를 결정짓는 자리</span>
+                <span className="detail-count tnum">
+                  {derived.panels.length} / {derived.panelTotal || PANEL_SLOTS}컷
+                </span>
               </div>
             ) : null}
           </Slot>
@@ -165,7 +178,7 @@ export function ListingFrame({
                   key={index}
                   slotKey={`panel-${index}`}
                   className="panel-slot"
-                  filled={Boolean(panel)}
+                  filled={shows(`panel-${index}`, Boolean(panel))}
                   target={targetSlot === `panel-${index}`}
                   ghostTitle={planned ? (ROLE_LABEL[planned.role] ?? planned.role) : String(index + 1)}
                   register={registerSlot}
@@ -181,7 +194,7 @@ export function ListingFrame({
           <Slot
             slotKey="crumb"
             className="slot-text"
-            filled={crumbParts.length > 0}
+            filled={shows("crumb", crumbParts.length > 0)}
             target={targetSlot === "crumb"}
             ghostTitle="카테고리"
             register={registerSlot}
@@ -208,32 +221,26 @@ export function ListingFrame({
           <Slot
             slotKey="title"
             className="slot-text"
-            filled={titleFilled}
+            filled={shows("title", titleFilled)}
             target={targetSlot === "title"}
             ghostTitle="상품명"
+            ghostHint={
+              derived.productGroup ? `${derived.productGroup} — 검색 어휘로 짓는 중` : "검색 어휘로 짓습니다"
+            }
             register={registerSlot}
           >
             <>
               <div className="slot-label">상품명</div>
-              {settled ? (
-                <div className="slot-value title-swap" key={settled}>
-                  {settled}
-                </div>
-              ) : (
-                <>
-                  <div className="slot-value title-provisional">
-                    <u>상품군</u> {provisional}
-                  </div>
-                  <div className="title-note">상품명은 검색 수요로 다시 씁니다</div>
-                </>
-              )}
+              <div className="slot-value title-swap" key={settled ?? ""}>
+                {settled}
+              </div>
             </>
           </Slot>
 
           <Slot
             slotKey="price"
             className="slot-text"
-            filled={derived.price != null}
+            filled={shows("price", derived.price != null)}
             target={targetSlot === "price"}
             ghostTitle="판매가"
             register={registerSlot}
@@ -254,7 +261,7 @@ export function ListingFrame({
           <Slot
             slotKey="tags"
             className="slot-text"
-            filled={derived.tagCount > 0}
+            filled={shows("tags", derived.tagCount > 0)}
             target={targetSlot === "tags"}
             ghostTitle="검색 태그"
             register={registerSlot}
@@ -283,7 +290,7 @@ export function ListingFrame({
           <Slot
             slotKey="meta"
             className="slot-text"
-            filled={Boolean(derived.noticeType || derived.kcStatus || derived.originResolved != null)}
+            filled={shows("meta", Boolean(derived.noticeType || derived.kcStatus || derived.originResolved != null))}
             target={targetSlot === "meta"}
             ghostTitle="필수 표시 항목"
             ghostHint="법으로 요구되는 칸"
@@ -386,6 +393,12 @@ export interface RevealDirectorOptions {
 export interface RevealState {
   card: FeedCard | null;
   targetSlot: string | null;
+  /**
+   * 아직 장착되지 않은 슬롯. 이 슬롯은 데이터가 있어도 **비워 둔다** —
+   * 리빌보다 먼저 칸이 채워지면 "중앙에 등장했다가 슬롯에 장착된다"는 연출 자체가 사라지고,
+   * 착지점 사전 점등도 (이미 채워진 칸이라) 켜지지 않는다.
+   */
+  heldSlots: Set<string>;
   cardRef: (node: HTMLDivElement | null) => void;
 }
 
@@ -397,6 +410,7 @@ export function useRevealDirector({
   shotUrlBySlot,
 }: RevealDirectorOptions): RevealState {
   const [active, setActive] = useState<FeedCard | null>(null);
+  const [heldSlots, setHeldSlots] = useState<Set<string>>(() => new Set());
   const queueRef = useRef<FeedCard[]>([]);
   const seenRef = useRef(new Set<string>());
   const busyRef = useRef(false);
@@ -422,6 +436,17 @@ export function useRevealDirector({
   terminalRef.current = terminal;
 
   const schedulePumpRef = useRef<() => void>(() => undefined);
+
+  /** 대기 중이거나 지금 떠 있는 카드의 슬롯 = 아직 장착 전. */
+  const syncHeld = useCallback((current: FeedCard | null) => {
+    const next = new Set<string>();
+    for (const card of queueRef.current) if (card.slot) next.add(card.slot);
+    if (current?.slot) next.add(current.slot);
+    setHeldSlots((previous) => {
+      if (previous.size === next.size && [...previous].every((slot) => next.has(slot))) return previous;
+      return next;
+    });
+  }, []);
 
   /**
    * 표시 순서는 도착 순서가 아니라 `order`(등록 서사)가 정한다.
@@ -453,7 +478,8 @@ export function useRevealDirector({
     queueRef.current.shift();
     busyRef.current = true;
     setActive(next);
-  }, []);
+    syncHeld(next);
+  }, [syncHeld]);
 
   /** 유예 동안 도착분을 모았다가 한 번에 정렬해 뽑는다. */
   const schedulePump = useCallback(() => {
@@ -478,8 +504,11 @@ export function useRevealDirector({
       queueRef.current.push(card);
       added = true;
     }
-    if (added) schedulePump();
-  }, [cards, schedulePump]);
+    if (added) {
+      syncHeld(null);
+      schedulePump();
+    }
+  }, [cards, schedulePump, syncHeld]);
 
   useEffect(
     () => () => {
@@ -494,6 +523,7 @@ export function useRevealDirector({
     queueRef.current = [];
     busyRef.current = false;
     setActive(null);
+    setHeldSlots(new Set());
   }, [terminal, reduced]);
 
   // 등장 → 홀드 → 비행 → docked
@@ -536,6 +566,7 @@ export function useRevealDirector({
           if (cancelled) return;
           busyRef.current = false;
           setActive(null);
+          syncHeld(null);
           // 다음 카드도 유예를 거쳐 뽑는다 — 비행 중 도착분까지 순서에 포함시킨다.
           schedulePump();
         });
@@ -563,6 +594,7 @@ export function useRevealDirector({
           if (cancelled) return;
           busyRef.current = false;
           setActive(null);
+          syncHeld(null);
           // 다음 카드도 유예를 거쳐 뽑는다 — 비행 중 도착분까지 순서에 포함시킨다.
           schedulePump();
         });
@@ -572,14 +604,14 @@ export function useRevealDirector({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [active, schedulePump, reduced, slotRef, terminal]);
+  }, [active, schedulePump, syncHeld, reduced, slotRef, terminal]);
 
   const cardRef = useCallback((node: HTMLDivElement | null) => {
     nodeRef.current = node;
   }, []);
 
   void shotUrlBySlot;
-  return { card: active, targetSlot: active?.slot ?? null, cardRef };
+  return { card: active, targetSlot: active?.slot ?? null, heldSlots, cardRef };
 }
 
 export function RevealCard({
@@ -598,7 +630,13 @@ export function RevealCard({
       style={{ left: "50%", top: "50%", transform: "translate3d(-50%, -50%, 0)" }}
       aria-hidden
     >
-      <div className="reveal-kicker">{card.kicker}</div>
+      <div className="reveal-top">
+        <span className="reveal-kicker">{card.kicker}</span>
+        {/* 도착 전에 목적지를 말한다 — 슬롯 사전 점등과 함께 "저게 여기 들어가는구나"를 만든다. */}
+        {slotLabel(card.slot) ? (
+          <span className="reveal-dest">→ {slotLabel(card.slot)} 칸</span>
+        ) : null}
+      </div>
       {mediaUrl ? (
         <div className="reveal-media">
           <img src={mediaUrl} alt="" />
