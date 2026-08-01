@@ -883,6 +883,66 @@ textarea {
   transform: translateX(3px);
 }
 
+/* 폰 아이 배지 — 카메라가 돌고 있다는 고지이자 "들어 보이면 열린다"는 초대.
+   CTA 아래 한 줄로만 산다. 버튼보다 커지면 주객이 바뀐다. */
+.eye-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 0 2px;
+  font-size: 12.5px;
+  color: var(--faint);
+  line-height: 1.4;
+}
+
+.eye-badge.is-mute {
+  margin: 9px 0 0;
+  color: var(--faint);
+}
+
+.eye-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  box-shadow: 0 0 0 0 var(--blue-soft);
+}
+
+.eye-badge.is-seeing .eye-dot {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px var(--blue-soft);
+}
+
+.eye-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.eye-badge.is-seeing .eye-copy {
+  color: var(--blue-deep);
+  font-weight: 600;
+}
+
+/* 확신 게이지 — 채워지는 동안만 존재감이 있다. 사라질 땐 그냥 0 이 된다. */
+.eye-gauge {
+  flex: none;
+  width: 46px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.eye-gauge i {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  transform-origin: left center;
+  transition: transform 90ms linear;
+}
+
 /* 메모 — 접지 않는다. 사진과 함께 이 화면의 두 입력 중 하나다. 라벨 없이 플레이스홀더가 말한다. */
 .note-block {
   position: relative;
@@ -5120,4 +5180,277 @@ textarea {
 .library,
 .rs {
   padding-top: clamp(84px, 11vh, 108px);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   폰 아이 실험실 (?eye=1) — 튜닝 전용 QA 화면. 시연 경로가 아니다.
+   제품면 토큰만 쓰고, 새 색을 만들지 않는다.
+   ═══════════════════════════════════════════════════════════════ */
+
+.lab {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
+  color: var(--ink);
+}
+
+.lab-top h1 {
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+}
+
+.lab-top p {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.lab-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lab-btn {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: var(--r-sm);
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.lab-btn.ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+  font-weight: 500;
+}
+
+.lab-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.lab-model select {
+  font: inherit;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.lab-status {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  color: var(--muted);
+}
+
+.lab-status.is-watching {
+  background: var(--green-soft);
+  color: var(--green-deep);
+}
+
+.lab-status.is-denied,
+.lab-status.is-unavailable {
+  background: var(--red-soft);
+  color: var(--red-deep);
+}
+
+.lab-spots {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.lab-error {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  background: var(--red-soft);
+  color: var(--red-deep);
+  font-size: 13px;
+}
+
+.lab-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px;
+  margin-top: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .lab-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.lab-view {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
+}
+
+.lab-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  /* 거울 반전 — 사용자가 자기 손을 보는 방향과 맞춘다. 박스도 같이 뒤집힌다. */
+  transform: scaleX(-1);
+}
+
+.lab-view-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-size: 14px;
+}
+
+/* 영상이 거울이므로 박스 레이어를 통째로 뒤집는다 — 박스 하나만 뒤집으면
+   제자리에서 반전될 뿐 위치가 옮겨지지 않는다. 글자는 레이어 안에서 되돌린다. */
+.lab-boxes {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(-1);
+  pointer-events: none;
+}
+
+.lab-box {
+  position: absolute;
+  border: 2px solid var(--faint);
+  border-radius: 6px;
+}
+
+.lab-box span {
+  position: absolute;
+  right: 0;
+  top: -22px;
+  transform: scaleX(-1);
+  transform-origin: right center;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--faint);
+  color: var(--paper);
+}
+
+.lab-box.counts {
+  border-color: var(--green);
+  border-width: 3px;
+}
+
+.lab-box.counts span {
+  background: var(--green-deep);
+}
+
+.lab-gate {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  background: rgba(25, 31, 40, 0.72);
+  color: #fff;
+}
+
+.lab-side {
+  display: grid;
+  gap: 18px;
+}
+
+.lab-charge {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.lab-charge-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+
+.lab-charge-bar i {
+  display: block;
+  height: 100%;
+  background: var(--blue);
+  transform-origin: left center;
+  transition: transform 90ms linear;
+}
+
+.lab-readout {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.lab-readout.empty {
+  display: block;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  color: var(--faint);
+  text-align: center;
+}
+
+.lab-readout th,
+.lab-readout td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.lab-readout th {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.lab-readout tr.counts td {
+  color: var(--green-deep);
+  font-weight: 600;
+}
+
+.lab-sliders {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.lab-sliders label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lab-sliders input[type="range"] {
+  width: 100%;
+  accent-color: var(--blue);
 }

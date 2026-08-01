@@ -9,6 +9,8 @@ import {
 import { createListing, fetchListing, fetchListings, formatDate, formatPrice } from "./api";
 import { PhoneLinkModal, PhoneStudio } from "./PhoneLink";
 import { usePhoneLink } from "./link-client";
+import { EyeBadge } from "./PhoneEye";
+import { eyeSupported, usePhoneEye, type PhoneEyeApi } from "./phone-eye";
 import { MissionControl, ResultShowcase } from "./Theater";
 import { FACT_KIND_LABEL, ROLE_LABEL } from "./stage-model";
 import type { ListingEvent, ListingMaterials, ListingRecord } from "./domain/types";
@@ -177,6 +179,22 @@ export default function App() {
   const showResult =
     activeListing != null && activeListing.status === "registered" && lingerDone && !controlVisible;
 
+  /**
+   * 폰 아이 — 랜딩이 맨 앞에 있고 아직 폰이 안 붙었을 때만 맥북 카메라가 지켜본다.
+   * 그 밖의 모든 순간(등록 진행·결과·드로어·목록·이미 연결됨)에는 눈을 감는다.
+   * 켤 이유가 없는데 켜져 있는 카메라는 그 자체로 버그다.
+   */
+  const eye = usePhoneEye({
+    enabled:
+      eyeSupported() &&
+      view === "upload" &&
+      link.phase === "idle" &&
+      !controlVisible &&
+      !showResult &&
+      detailListing == null,
+    onSpot: link.start,
+  });
+
   /* 스테이지·폰 링크가 떠 있는 동안 스크롤 잠금 — parked 는 랜딩이 그대로 보이는 상태다 */
   const linkOverlayVisible = link.phase !== "idle" && link.phase !== "parked";
   useEffect(() => {
@@ -315,6 +333,7 @@ export default function App() {
             onNote={setNote}
             onStart={() => void start()}
             onPhoneLink={link.start}
+            eye={eye}
             linkBusy={link.phase !== "idle" && link.phase !== "parked"}
             linkParked={link.phase === "parked"}
             voiceLive={link.phase === "live" && link.voice.status === "ready"}
@@ -395,6 +414,7 @@ interface LandingViewProps {
   onNote: (value: string) => void;
   onStart: () => void;
   onPhoneLink: () => void;
+  eye: PhoneEyeApi;
   linkBusy: boolean;
   linkParked: boolean;
   voiceLive: boolean;
@@ -413,6 +433,7 @@ function LandingView({
   onNote,
   onStart,
   onPhoneLink,
+  eye,
   linkBusy,
   linkParked,
   voiceLive,
@@ -565,6 +586,8 @@ function LandingView({
               →
             </span>
           </button>
+
+          {linkParked ? null : <EyeBadge eye={eye} />}
 
           <label className="note-block">
             {voiceLive ? (

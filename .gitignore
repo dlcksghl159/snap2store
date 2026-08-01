@@ -15,3 +15,7 @@ HOW-TO-USE.md
 
 # 로컬 QA 하네스 (제품 코드 아님)
 .qa/
+
+# MediaPipe wasm — node_modules 에서 복사해 쓴다 (scripts/vendor-vision.mjs)
+public/vision/wasm/
+public/vision/models/efficientdet_lite2.tflite

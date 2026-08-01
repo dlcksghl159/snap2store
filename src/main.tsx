@@ -6,8 +6,13 @@ import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 import App from "./App";
 import { PreviewApp, previewModeFromLocation } from "./preview";
+import { EyeLab, eyeLabRequested } from "./eye-lab";
 
 const root = createRoot(document.getElementById("root")!);
 const preview = previewModeFromLocation();
 
-root.render(<StrictMode>{preview ? <PreviewApp mode={preview} /> : <App />}</StrictMode>);
+root.render(
+  <StrictMode>
+    {eyeLabRequested() ? <EyeLab /> : preview ? <PreviewApp mode={preview} /> : <App />}
+  </StrictMode>,
+);

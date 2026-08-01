@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/vendor-vision.mjs",
+    "prebuild": "node scripts/vendor-vision.mjs",
+    "vision:lite2": "curl -fsSL -o public/vision/models/efficientdet_lite2.tflite https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite2/float32/1/efficientdet_lite2.tflite",
     "dev": "vite",
     "dev:agent": "tsx watch server/index.ts",
     "dev:full": "concurrently -k -n agent,ui -c blue,green \"npm:dev:agent\" \"npm:dev\"",
@@ -14,6 +17,7 @@
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@openai/agents": "^0.14.1",
     "@phosphor-icons/react": "^2.1.10",
     "@vitejs/plugin-react": "^5.0.4",
