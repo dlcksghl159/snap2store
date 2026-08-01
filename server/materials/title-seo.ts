@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requestOpenAiJson, strictObject } from "../ai/openai-json.js";
 import { normalizeKeyword, researchKeywordVolumes } from "../naver/searchad.js";
-import { validateTitle } from "./title-gate.js";
+import { repairTitle, validateTitle } from "./title-gate.js";
 import type { SeoTitleResult, ShoppingSearchItem, SpecFact } from "../../src/domain/types";
 
 const TITLE_BUDGET = 48;
@@ -90,14 +90,53 @@ export function vocabularyKeys(sources: string[]): Set<string> {
   return keys;
 }
 
+/**
+ * 발명 단어 거부. ⚠ 완전 일치로 검사하면 안 된다 —
+ * 한국어는 "6단"+"각도조절" → "6단각도조절" 처럼 붙여 쓰는 게 정상이라
+ * 일치 검사는 정상 후보를 전멸시키고 SEO 제목이 통째로 null 이 된다.
+ * 허용 어휘로 **분해 가능한지**로 판정한다 (환각은 여전히 막힌다).
+ */
 function titleUsesOnlyKnownWords(title: string, vocabulary: Set<string>): boolean {
   for (const word of title.split(/[\s/,]+/)) {
     const cleaned = word.trim();
     if (cleaned.length < 2) continue;
     const key = cleaned.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
-    if (!vocabulary.has(key)) return false;
+    if (vocabulary.has(key)) continue;
+    if (!isDecomposable(cleaned, vocabulary)) return false;
   }
   return true;
+}
+
+/**
+ * 검색광고 자격증명이 없을 때의 수요 대용치.
+ * 카탈로그 comps 제목에 그 표현이 몇 번 등장하는지를 센다 —
+ * 지어낸 수치가 아니라 실제 시장 어휘의 빈도다.
+ */
+export function compsFrequency(comps: ShoppingSearchItem[]): Map<string, number> {
+  const frequency = new Map<string, number>();
+  for (const comp of comps) {
+    const title = (comp.title ?? "").normalize("NFKC").toLocaleLowerCase("ko-KR");
+    if (!title) continue;
+    for (const word of title.split(/[\s/,()[\]]+/)) {
+      const key = word.trim();
+      if (key.length < 2) continue;
+      frequency.set(key, (frequency.get(key) ?? 0) + 1);
+    }
+  }
+  return frequency;
+}
+
+function compsScore(frequency: Map<string, number>, token: string): number {
+  const key = token.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+  let score = frequency.get(key) ?? 0;
+  if (score === 0) {
+    // 복합 토큰은 부분 등장도 인정한다 ("각도조절" ← "각도")
+    for (const [word, count] of frequency) {
+      if (word.length >= 2 && key.includes(word)) score = Math.max(score, count);
+    }
+  }
+  // keywordstool 의 월간 검색량과 자릿수를 맞춰 준다.
+  return score * 50;
 }
 
 /**
@@ -184,16 +223,11 @@ export interface SeoTitleInput {
   comps: ShoppingSearchItem[];
 }
 
-const EMPTY: SeoTitleResult = {
-  title: null,
-  strategy: null,
-  coveredQueries: [],
-  uncoveredQueries: [],
-  monthlyVolume: 0,
-  warnings: [],
-};
-
-/** 어떤 단계의 실패도 비치명이다. null 을 반환하면 호출자가 에이전트 제목을 유지한다. */
+/**
+ * 어떤 단계의 실패도 비치명이다. 그리고 **상품명은 반드시 확정된다** —
+ * 어느 단계가 무너져도 근거 토큰으로 조립한 제목을 낸다 (`strategy: "composed"`).
+ * 예전처럼 null 을 내보내면 에이전트의 평문 제목이 그대로 등록돼 검색이 잡히지 않는다.
+ */
 export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleResult> {
   const warnings: string[] = [];
 
@@ -223,7 +257,21 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
     });
   } catch (error) {
     console.warn("[title-seo] 분해 실패:", error instanceof Error ? error.message : error);
-    return { ...EMPTY, warnings: ["상품명 SEO 분해 단계 실패 — 에이전트 제목을 유지합니다."] };
+    // 분해가 실패해도 상품군 명사 + 확정 스펙으로 최소 조립은 한다 — 상품명은 반드시 확정된다.
+    const salvage = [input.productGroup, ...input.specFacts.map((fact) => fact.value)]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value));
+    decomposition = {
+      units: [
+        { kind: "product_type", importance: "primary", expressions: [input.productGroup] },
+        ...salvage.slice(1, 6).map((value) => ({
+          kind: "spec",
+          importance: "secondary" as const,
+          expressions: [value],
+        })),
+      ],
+    };
+    warnings.push("상품명 분해 실패 — 상품군과 확정 스펙으로 조립했습니다.");
   }
 
   const productTypeUnit =
@@ -251,14 +299,29 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
     .slice(0, MAX_RESEARCH_EXPRESSIONS);
 
   const research = await researchKeywordVolumes(expressions);
-  if (!research.available) warnings.push("검색 수요 API 자격증명이 없어 검색량 없이 조합했습니다.");
+  const frequency = compsFrequency(input.comps);
+  if (!research.available) {
+    warnings.push("검색 수요 API 자격증명 없음 — 카탈로그 comps 어휘 빈도로 대체했습니다.");
+  }
 
-  // ③ 질의 풀 진실 필터
-  const queries = research.harvested
-    .filter((entry) => isDecomposable(entry.keyword, vocabulary))
-    .sort((a, b) => b.monthlyVolume - a.monthlyVolume)
-    .slice(0, 40)
-    .map((entry) => ({ text: entry.keyword, volume: entry.monthlyVolume }));
+  // ③ 질의 풀 진실 필터 — 허용 어휘로 완전 분해 가능한 것만.
+  //    keywordstool 이 없으면 comps 제목 자체를 질의 풀로 쓴다.
+  const harvested =
+    research.harvested.length > 0
+      ? research.harvested.map((entry) => ({ text: entry.keyword, volume: entry.monthlyVolume }))
+      : input.comps
+          .map((comp) => (comp.title ?? "").trim())
+          .filter(Boolean)
+          .map((title) => ({ text: title, volume: 0 }));
+
+  const queries = harvested
+    .filter((entry) => isDecomposable(entry.text, vocabulary))
+    .map((entry) => ({
+      text: entry.text,
+      volume: entry.volume > 0 ? entry.volume : compsScore(frequency, entry.text),
+    }))
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 40);
 
   // ④ 서버 토큰 최적화
   const tokenPicks: TokenPick[] = [];
@@ -268,10 +331,45 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
       const token = expression.trim();
       if (!token || seenToken.has(token)) continue;
       seenToken.add(token);
-      tokenPicks.push({ token, volume: research.volumes.get(normalizeKeyword(token)) ?? 0 });
+      const measured = research.volumes.get(normalizeKeyword(token)) ?? 0;
+      tokenPicks.push({ token, volume: measured > 0 ? measured : compsScore(frequency, token) });
     }
   }
   const tokens = optimizeTokens({ anchor, tokens: tokenPicks, queries });
+
+  /**
+   * 최후 폴백 — LLM 후보가 전멸해도 상품명은 **반드시 확정된다**.
+   * 근거에서 뽑은 토큰만 쓰므로 발명 단어가 아니고, 상품군 명사가 맨 앞에 온다.
+   */
+  const composed = (): SeoTitleResult => {
+    const picked: string[] = [];
+    let used = 0;
+    for (const token of tokens) {
+      const next = used === 0 ? token.length : used + 1 + token.length;
+      if (next > TITLE_BUDGET) continue;
+      if (picked.some((existing) => existing.includes(token) || token.includes(existing))) continue;
+      picked.push(token);
+      used = next;
+    }
+    const raw = picked.join(" ") || anchor;
+    const gate = validateTitle(raw, "generation");
+    const title = gate.errors.length === 0 ? gate.title : repairTitle(raw, anchor, "generation").title;
+    const key = title.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+    const covered = queries.filter((query) =>
+      key.includes(query.text.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR")),
+    );
+    return {
+      title,
+      strategy: "composed",
+      coveredQueries: covered.map((query) => query.text),
+      uncoveredQueries: queries
+        .filter((query) => !covered.some((entry) => entry.text === query.text))
+        .slice(0, 12)
+        .map((query) => query.text),
+      monthlyVolume: covered.reduce((sum, query) => sum + query.volume, 0),
+      warnings,
+    };
+  };
 
   // ⑤ 어순 구성
   let candidates: z.infer<typeof CandidateSchema>;
@@ -290,7 +388,8 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
     });
   } catch (error) {
     console.warn("[title-seo] 어순 구성 실패:", error instanceof Error ? error.message : error);
-    return { ...EMPTY, warnings: [...warnings, "상품명 어순 구성 실패 — 에이전트 제목을 유지합니다."] };
+    warnings.push("상품명 어순 구성 실패 — 근거 토큰으로 직접 조립했습니다.");
+    return composed();
   }
 
   // ⑥ 선택
@@ -315,7 +414,8 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
 
   const winner = scored[0];
   if (!winner) {
-    return { ...EMPTY, warnings: [...warnings, "상품명 후보가 게이트·어휘 검증을 통과하지 못했습니다."] };
+    warnings.push("상품명 후보가 게이트·어휘 검증을 통과하지 못해 근거 토큰으로 직접 조립했습니다.");
+    return composed();
   }
 
   const coveredSet = new Set(winner.covered);

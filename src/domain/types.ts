@@ -176,7 +176,8 @@ export interface TagResolution {
 
 export interface SeoTitleResult {
   title: string | null;
-  strategy: "accuracy" | "balanced" | "conversion" | null;
+  /** `composed` = LLM 후보가 전멸해 서버가 근거 토큰으로 직접 조립한 제목. */
+  strategy: "accuracy" | "balanced" | "conversion" | "composed" | null;
   coveredQueries: string[];
   uncoveredQueries: string[];
   monthlyVolume: number;
