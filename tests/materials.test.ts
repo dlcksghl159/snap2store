@@ -6,6 +6,7 @@ import {
   calcReturnExchangeFeeKrw,
 } from "../server/materials/pricing.js";
 import { matchOriginCountry, resolveOrigin } from "../server/materials/origin.js";
+import { readsAsProductName } from "../server/materials/title-seo.js";
 import { decideKc, resolveKcCategoryStatus } from "../server/materials/kc.js";
 import { resolveNotice } from "../server/materials/notice.js";
 import { normalizePath, resolveLeafFromDisplayPath, type CategoryTree } from "../server/catalog/categories.js";
@@ -51,6 +52,30 @@ describe("공식 태그 철자 채택", () => {
     const picked = pickOfficialSpelling(rows, "노트북거치대");
     expect(picked.official).toBe(false);
     expect(picked.text).toBe("노트북거치대");
+  });
+});
+
+describe("상품명 자연스러움", () => {
+  it("머리명사가 뒤로 밀린 명사 나열을 거부한다 — 회귀 방지", () => {
+    // 실제로 이렇게 등록됐다: 마지막 명사가 '커버'라 커버 상품으로 읽힌다.
+    expect(readsAsProductName("텀블러 손잡이 크림 투명 커버", "텀블러")).toBe(false);
+    expect(readsAsProductName("거치대 알루미늄 각도조절 접이식 휴대", "거치대")).toBe(false);
+  });
+
+  it("상품군 명사로 끝나거나 스펙이 뒤따르면 통과한다", () => {
+    expect(readsAsProductName("스테인리스 보온 텀블러", "텀블러")).toBe(true);
+    expect(readsAsProductName("크림 손잡이 텀블러 500ml", "텀블러")).toBe(true);
+    expect(readsAsProductName("알루미늄 접이식 노트북 거치대", "거치대")).toBe(true);
+    expect(readsAsProductName("노트북 거치대 알루미늄 6단 휴대용", "거치대")).toBe(true);
+  });
+
+  it("상품군 명사가 아예 없으면 거부한다", () => {
+    expect(readsAsProductName("크림 투명 커버 손잡이", "텀블러")).toBe(false);
+  });
+
+  it("한 단어이거나 지나치게 길면 거부한다", () => {
+    expect(readsAsProductName("텀블러", "텀블러")).toBe(false);
+    expect(readsAsProductName("가 나 다 라 마 바 사 아 자 텀블러", "텀블러")).toBe(false);
   });
 });
 

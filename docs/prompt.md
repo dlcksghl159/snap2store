@@ -126,8 +126,15 @@ only from text you can actually read or facts you verified:
 - Give your best market-informed price estimate in `salePrice` and explain
   the basis briefly — your estimate is normally what ships, labeled as an
   agent estimate.
-- Keep the title natural, factual, and under 50 characters. Do not add
-  unsupported brand names or promotional superlatives.
+- **The title must read as a natural Korean product name**, not a list of nouns.
+  The product-group noun is the head noun: modifiers come BEFORE it, and only
+  specs (size, capacity, color, count) may follow it.
+  Good: "스테인리스 보온 텀블러 500ml" · "알루미늄 접이식 노트북 거치대"
+  Bad: "텀블러 손잡이 크림 투명 커버" — it ends on a part noun, so shoppers read
+  it as a lid product. Bad: "거치대 알루미늄 각도조절 접이식 휴대" — noun salad.
+  Never end the title on a component noun (커버 · 손잡이 · 뚜껑 · 케이스 …).
+  Keep it factual, 2–7 words, under 50 characters. Do not add unsupported brand
+  names or promotional superlatives.
 
 ## Stop rules
 

@@ -66,15 +66,25 @@ const CANDIDATE_JSON_SCHEMA = strictObject({
   },
 });
 
-const CANDIDATE_SYSTEM = `당신은 네이버 스마트스토어 상품명의 어순을 구성합니다. 조합 탐색은 이미 끝났습니다 —
-당신은 주어진 토큰을 읽기 좋은 순서로 배열하기만 합니다.
+const CANDIDATE_SYSTEM = `당신은 네이버 스마트스토어 상품명을 씁니다.
+
+가장 중요한 것: **사람이 읽었을 때 자연스러운 한국어 상품명**이어야 합니다.
+검색 최적화는 그 다음입니다. 토큰을 나열한 문자열은 실패입니다.
+
+문장 구조 (반드시 지킬 것):
+- 상품군 명사가 **머리명사**입니다. 수식어가 그 **앞**에 오고, 뒤에는 규격·용량·색상 같은
+  스펙만 붙습니다.
+  좋음: "스테인리스 보온 텀블러 500ml" / "알루미늄 접이식 노트북 거치대"
+  나쁨: "텀블러 손잡이 크림 투명 커버" ← 마지막 명사가 '커버'라 커버 상품으로 읽힙니다
+  나쁨: "거치대 알루미늄 각도조절 접이식 휴대" ← 명사 나열
+- 부품·부속 명사(커버·손잡이·뚜껑·케이스 등)로 제목을 끝내지 않습니다.
+- 2~7단어. 공백 포함 50자 이내.
 
 절대 규칙:
 - 제공된 토큰·유닛 표현에 있는 단어만 사용합니다. 새 단어를 만들지 않습니다.
-- 상품군 명사는 앞쪽 1~3단어 안에 옵니다.
 - 같은 단어를 두 번 쓰지 않습니다.
-- 공백 포함 50자 이내.
-- 정확히 3개 후보: accuracy(사실 충실) / balanced(균형) / conversion(검색 유입 중시).`;
+- 정확히 3개 후보: accuracy(사실 충실) / balanced(균형) / conversion(검색 유입 중시).
+  셋 다 위 문장 구조를 지켜야 합니다.`;
 
 /* ── 어휘 검증 ──────────────────────────────────────────────── */
 
@@ -105,6 +115,32 @@ function titleUsesOnlyKnownWords(title: string, vocabulary: Set<string>): boolea
     if (!isDecomposable(cleaned, vocabulary)) return false;
   }
   return true;
+}
+
+/** 상품군 명사 뒤에 붙어도 자연스러운 꼬리 — 규격·용량·색상·용도 접미. */
+const SPEC_TAIL_RE = /[0-9]|(용|형|식|급|색|컬러|사이즈|세트|입|팩|들이|ml|l|g|kg|cm|mm|인치|호)$/i;
+
+function nfkcKey(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
+}
+
+/**
+ * 자연스러운 상품명인지 판정한다.
+ *
+ * 핵심은 **머리명사 위치**다. "텀블러 손잡이 크림 투명 커버" 는 게이트도 어휘 검증도
+ * 통과하지만 마지막 명사가 '커버'라 커버 상품으로 읽힌다 — 실제로 이렇게 등록됐다.
+ * 상품군 명사 뒤에는 규격·색상 같은 스펙만 올 수 있다.
+ */
+export function readsAsProductName(title: string, anchor: string): boolean {
+  const tokens = title.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 8) return false;
+
+  const anchorKey = nfkcKey(anchor);
+  if (!anchorKey || !nfkcKey(title).includes(anchorKey)) return false;
+
+  const last = tokens[tokens.length - 1];
+  // 마지막 토큰은 상품군 명사이거나, 그 뒤에 붙어도 되는 스펙성 표현이어야 한다.
+  return nfkcKey(last).includes(anchorKey) || SPEC_TAIL_RE.test(last);
 }
 
 /**
@@ -257,21 +293,14 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
     });
   } catch (error) {
     console.warn("[title-seo] 분해 실패:", error instanceof Error ? error.message : error);
-    // 분해가 실패해도 상품군 명사 + 확정 스펙으로 최소 조립은 한다 — 상품명은 반드시 확정된다.
-    const salvage = [input.productGroup, ...input.specFacts.map((fact) => fact.value)]
-      .map((value) => value?.trim())
-      .filter((value): value is string => Boolean(value));
-    decomposition = {
-      units: [
-        { kind: "product_type", importance: "primary", expressions: [input.productGroup] },
-        ...salvage.slice(1, 6).map((value) => ({
-          kind: "spec",
-          importance: "secondary" as const,
-          expressions: [value],
-        })),
-      ],
+    return {
+      title: null,
+      strategy: null,
+      coveredQueries: [],
+      uncoveredQueries: [],
+      monthlyVolume: 0,
+      warnings: ["상품명 분해 실패 — 에이전트가 쓴 상품명을 그대로 씁니다."],
     };
-    warnings.push("상품명 분해 실패 — 상품군과 확정 스펙으로 조립했습니다.");
   }
 
   const productTypeUnit =
@@ -338,38 +367,19 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
   const tokens = optimizeTokens({ anchor, tokens: tokenPicks, queries });
 
   /**
-   * 최후 폴백 — LLM 후보가 전멸해도 상품명은 **반드시 확정된다**.
-   * 근거에서 뽑은 토큰만 쓰므로 발명 단어가 아니고, 상품군 명사가 맨 앞에 온다.
+   * SEO 후보가 전멸했을 때의 답은 **토큰 조합이 아니라 에이전트가 쓴 이름**이다.
+   * 근거 토큰을 이어 붙이면 "텀블러 손잡이 크림 투명 커버" 같은 명사 나열이 나오고,
+   * 그건 검색에는 조금 유리해도 사람에게는 허접한 상품명으로 읽힌다.
+   * null 을 돌려주면 호출자가 에이전트의 자연스러운 제목을 그대로 쓴다.
    */
-  const composed = (): SeoTitleResult => {
-    const picked: string[] = [];
-    let used = 0;
-    for (const token of tokens) {
-      const next = used === 0 ? token.length : used + 1 + token.length;
-      if (next > TITLE_BUDGET) continue;
-      if (picked.some((existing) => existing.includes(token) || token.includes(existing))) continue;
-      picked.push(token);
-      used = next;
-    }
-    const raw = picked.join(" ") || anchor;
-    const gate = validateTitle(raw, "generation");
-    const title = gate.errors.length === 0 ? gate.title : repairTitle(raw, anchor, "generation").title;
-    const key = title.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
-    const covered = queries.filter((query) =>
-      key.includes(query.text.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR")),
-    );
-    return {
-      title,
-      strategy: "composed",
-      coveredQueries: covered.map((query) => query.text),
-      uncoveredQueries: queries
-        .filter((query) => !covered.some((entry) => entry.text === query.text))
-        .slice(0, 12)
-        .map((query) => query.text),
-      monthlyVolume: covered.reduce((sum, query) => sum + query.volume, 0),
-      warnings,
-    };
-  };
+  const keepAgentTitle = (reason: string): SeoTitleResult => ({
+    title: null,
+    strategy: null,
+    coveredQueries: [],
+    uncoveredQueries: queries.slice(0, 12).map((query) => query.text),
+    monthlyVolume: 0,
+    warnings: [...warnings, reason],
+  });
 
   // ⑤ 어순 구성
   let candidates: z.infer<typeof CandidateSchema>;
@@ -388,8 +398,7 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
     });
   } catch (error) {
     console.warn("[title-seo] 어순 구성 실패:", error instanceof Error ? error.message : error);
-    warnings.push("상품명 어순 구성 실패 — 근거 토큰으로 직접 조립했습니다.");
-    return composed();
+    return keepAgentTitle("상품명 어순 구성 실패 — 에이전트가 쓴 상품명을 그대로 씁니다.");
   }
 
   // ⑥ 선택
@@ -398,6 +407,8 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
       const gate = validateTitle(candidate.title, "generation");
       if (gate.errors.length > 0) return null;
       if (!titleUsesOnlyKnownWords(gate.title, vocabulary)) return null;
+      // ⚠ 자연스러움이 검색량보다 앞선다 — 명사 나열은 여기서 걸러진다.
+      if (!readsAsProductName(gate.title, anchor)) return null;
       const key = gate.title.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR");
       const covered = queries.filter((query) =>
         key.includes(query.text.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase("ko-KR")),
@@ -414,8 +425,7 @@ export async function generateSeoTitle(input: SeoTitleInput): Promise<SeoTitleRe
 
   const winner = scored[0];
   if (!winner) {
-    warnings.push("상품명 후보가 게이트·어휘 검증을 통과하지 못해 근거 토큰으로 직접 조립했습니다.");
-    return composed();
+    return keepAgentTitle("상품명 후보가 자연스러움·어휘 검증을 통과하지 못해 에이전트가 쓴 상품명을 그대로 씁니다.");
   }
 
   const coveredSet = new Set(winner.covered);
