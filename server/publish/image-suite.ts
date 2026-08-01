@@ -11,32 +11,52 @@ import { ensureListingAssetDirectory, listingAssetUrl } from "../store.js";
 import type { SellerConfig } from "../seller-config.js";
 import type { ImageSuiteResult, ShotKind, SpecFact, SuiteImage } from "../../src/domain/types";
 
-/** 전샷 동시 — 429 는 SDK retry-after 가 흡수한다. */
-const GEN_CONCURRENCY = 6;
-/** 스위트 전체 하드 예산. 예산 안에 정착한 샷만 채택한다. */
-const SUITE_BUDGET_MS = 70_000;
+/** 갤러리 샷 동시 생성 — 429 는 SDK retry-after 가 흡수한다. */
+const GEN_CONCURRENCY = 4;
 /** ⚠ 816×816 은 gpt-image-2 의 최소 유효 정사각이다 (16의 배수 & 655,360px 이상). */
 const GALLERY_SIZE = "816x816";
 const MAIN_SIZE = "1024x1024";
+/** gpt-image 계열은 참조 이미지를 최대 16장 받는다. */
+export const MAX_REFERENCE_IMAGES = 16;
+
+/** 품질이 올라가면 샷당 시간이 크게 늘어난다 — 예산도 함께 올린다. */
+function suiteBudgetMs(quality: string, mainQuality: string): number {
+  const worst = quality === "high" || mainQuality === "high" ? "high" : quality === "medium" || mainQuality === "medium" ? "medium" : "low";
+  if (worst === "high") return 190_000;
+  if (worst === "medium") return 120_000;
+  return 70_000;
+}
 
 let imageClient: OpenAI | null = null;
 
-/** ⚠ 240초 기본 타임아웃은 무대 예산과 양립 불가다. 샷당 90초 상한. */
+/** ⚠ 240초 기본 타임아웃은 무대 예산과 양립 불가다. 샷당 상한을 건다. */
 export function getImageClient(): OpenAI {
   if (!imageClient) {
-    imageClient = new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 90_000, maxRetries: 1 });
+    imageClient = new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 150_000, maxRetries: 1 });
   }
   return imageClient;
 }
 
-export const PRESERVATION_RULES = `Use the uploaded product photo as the only source of product identity.
-Preserve the product's exact shape, proportions, colors, materials, textures, and any
-printed logos or labels physically on the product.
+/**
+ * 보존 규칙 — 모든 생성 프롬프트에 붙인다.
+ * 참조를 여러 장 넘기므로 "여러 각도의 같은 하나의 물건"임을 명시한다.
+ * 이 문장이 없으면 모델이 참조들을 서로 다른 상품으로 읽고 특징을 섞는다.
+ */
+export const PRESERVATION_RULES = `The attached reference photos are ALL of the SAME single physical product,
+photographed from different angles and distances. Combine them into one consistent
+understanding of that exact object — never treat them as different products and never
+blend features from more than one product.
+Use the reference photos as the only source of product identity.
+Preserve the product's exact shape, silhouette, proportions, colors, color placement,
+materials, surface finish, textures, part count, and any printed logos or labels
+physically on the product. The generated product must be recognizable as the very same
+item a buyer would receive.
 Remove promotional overlay text, watermarks, stickers, and price callouts that are not
 physically part of the product.
 Do NOT invent readable text, brand names, labels, badges, certificates, or UI overlays.
-Do NOT change the number of products, redesign, recolor, or add invented accessories or features.
-If part of the product is outside the frame in the reference, keep it outside the frame
+Do NOT change the number of products, redesign, recolor, restyle, or add invented
+accessories, parts, or features.
+If part of the product is outside the frame in the references, keep it outside the frame
 or use a cropped composition — do not invent the unseen portion.
 Professional commercial product photography, crisp focus on the product, natural realistic
 lighting, high detail.`;
@@ -102,24 +122,45 @@ export interface GenerateImageSuiteInput {
   signal?: AbortSignal;
 }
 
-/** 첫 번째 판독 가능한 사진 → 768px inside PNG. */
-async function prepareReference(photoPaths: string[]): Promise<Buffer> {
-  for (const photoPath of photoPaths) {
+export interface PreparedReference {
+  buffer: Buffer;
+  name: string;
+}
+
+/**
+ * 업로드한 사진 **전부**를 참조로 준비한다.
+ * 첫 장만 넘기면 여러 각도로 찍은 입력에서 보이지 않던 면을 모델이 창작해
+ * 실제 상품과 다른 이미지가 나온다.
+ */
+export async function prepareReferences(
+  photoPaths: string[],
+  limit = MAX_REFERENCE_IMAGES,
+): Promise<PreparedReference[]> {
+  const references: PreparedReference[] = [];
+  for (const [index, photoPath] of photoPaths.slice(0, limit).entries()) {
     try {
-      return await sharp(photoPath, { failOn: "none" })
+      const buffer = await sharp(photoPath, { failOn: "none" })
         .rotate()
-        .resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true })
-        .png()
+        .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 92 })
         .toBuffer();
+      references.push({ buffer, name: `reference-${index + 1}.jpg` });
     } catch {
       continue;
     }
   }
-  throw new Error("참조 사진을 준비하지 못했습니다.");
+  if (references.length === 0) throw new Error("참조 사진을 준비하지 못했습니다.");
+  return references;
+}
+
+async function toUploadables(references: PreparedReference[]) {
+  return Promise.all(
+    references.map((reference) => toFile(reference.buffer, reference.name, { type: "image/jpeg" })),
+  );
 }
 
 async function planShots(input: {
-  reference: Buffer;
+  references: PreparedReference[];
   productName: string;
   categoryQuery: string;
   summary: string;
@@ -127,9 +168,10 @@ async function planShots(input: {
   galleryCount: number;
 }): Promise<Array<{ kind: ShotKind; scene: string }>> {
   const total = 1 + input.galleryCount;
+  const multi = input.references.length > 1;
   const system = `커머스 화보 촬영 감독으로서 샷 플랜을 만듭니다. 각 shot의 scene은 영어로,
 배경·환경·소품·조명·구도를 구체적으로 씁니다.
-구성 규칙:
+${multi ? `첨부된 ${input.references.length}장은 모두 같은 하나의 상품을 여러 각도에서 찍은 것입니다. 상품의 실제 형태·색·구성을 그 사진들에서 종합해 파악하고, 사진에 없는 특징을 상상해 넣지 마세요.\n` : ""}구성 규칙:
 - 첫 샷은 반드시 main_studio: 밝고 깨끗한 스튜디오, 상품이 프레임 대부분을 차지, 은은한 그림자.
 - 이어서 갤러리 ${input.galleryCount}샷: 상품 특성에 어울리는 다양한 연출
   (alt_studio 다른 배경색/각도, lifestyle 어울리는 실제 공간, usage 사용 장면 중 택).
@@ -149,7 +191,10 @@ async function planShots(input: {
     const plan = await requestOpenAiJson({
       system,
       user: `첨부 사진의 상품입니다. ${details.join(" / ")} 총 ${total}샷.`,
-      imageUrls: [`data:image/png;base64,${input.reference.toString("base64")}`],
+      // 샷 플랜도 전 각도를 본다 — 한 장만 보면 안 보이는 면을 전제로 장면을 설계한다.
+      imageUrls: input.references
+        .slice(0, 6)
+        .map((reference) => `data:image/jpeg;base64,${reference.buffer.toString("base64")}`),
       schemaName: "image_shot_plan",
       jsonSchema: SHOT_PLAN_JSON_SCHEMA,
       validator: ShotPlanSchema,
@@ -179,13 +224,26 @@ export function normalizePlan(
   return output.slice(0, target);
 }
 
-function buildPrompt(shot: { kind: ShotKind; scene: string }, productName: string): string {
+function buildPrompt(
+  shot: { kind: ShotKind; scene: string },
+  productName: string,
+  referenceCount: number,
+  hasAnchor: boolean,
+): string {
   return [
-    `Product: ${productName || "the product in the reference photo"}`,
+    `Product: ${productName || "the product in the reference photos"}`,
     `Create a Korean e-commerce ${shot.kind === "closeup" ? "macro detail shot" : "product image"}.`,
     `Scene: ${shot.scene}`,
+    referenceCount > 1
+      ? `You are given ${referenceCount} reference photos of this one product.`
+      : "",
+    hasAnchor
+      ? "The LAST reference image is the approved studio hero of this product — match its rendering of the product exactly (same colors, same proportions, same details) and change only the scene around it."
+      : "",
     PRESERVATION_RULES,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 interface ShotResult {
@@ -198,24 +256,24 @@ interface ShotResult {
 
 export async function generateImageSuite(input: GenerateImageSuiteInput): Promise<ImageSuiteResult> {
   const startedAt = Date.now();
-  const budgetLeft = (): number => SUITE_BUDGET_MS - (Date.now() - startedAt);
-  const warnings: string[] = [];
   const { config } = input;
+  const budget = suiteBudgetMs(config.media.quality, config.media.mainQuality);
+  const budgetLeft = (): number => budget - (Date.now() - startedAt);
+  const warnings: string[] = [];
 
   if (!env.OPENAI_API_KEY) {
     return { main: null, gallery: [], detailCuts: [], warnings: ["OPENAI_API_KEY 가 없어 연출 이미지를 만들지 못했습니다."] };
   }
 
   const directory = await ensureListingAssetDirectory(input.listingId);
-  const reference = await prepareReference(input.photoPaths);
+  const references = await prepareReferences(input.photoPaths);
 
   const galleryCount = config.media.galleryCount;
   // ⚠ 상세 컷은 스위트가 만들지 않는다 — 상세는 세로 패널 시스템이 전담한다.
-  const detailCutCount = 0;
-  const targetShotCount = 1 + galleryCount + detailCutCount;
+  const targetShotCount = 1 + galleryCount;
 
   const shots = await planShots({
-    reference,
+    references,
     productName: input.productName,
     categoryQuery: input.categoryQuery,
     summary: input.summary,
@@ -231,6 +289,8 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
 
   const results: (ShotResult | null)[] = new Array(shots.length).fill(null);
   const failed = new Set<number>();
+  /** 대표 컷이 완성되면 나머지 샷의 정체성 앵커로 재사용한다. */
+  let anchor: PreparedReference | null = null;
 
   const renderShot = async (index: number): Promise<void> => {
     if (input.signal?.aborted) return;
@@ -239,28 +299,37 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
     const quality = isMain ? config.media.mainQuality : config.media.quality;
     const size = isMain ? MAIN_SIZE : GALLERY_SIZE;
     const shotStartedAt = Date.now();
-    emit("image.shot_started", { kind: shot.kind, index, quality });
+    const shotReferences = anchor && !isMain ? [...references, anchor] : references;
+    emit("image.shot_started", {
+      kind: shot.kind,
+      index,
+      quality,
+      referenceCount: shotReferences.length,
+    });
 
     try {
       const response = await getImageClient().images.edit({
         model: env.OPENAI_IMAGE_MODEL,
-        image: await toFile(reference, "reference.png", { type: "image/png" }),
-        prompt: buildPrompt(shot, input.productName),
+        // 업로드한 사진 전부(+대표 앵커)를 참조로 넘긴다.
+        image: await toUploadables(shotReferences.slice(0, MAX_REFERENCE_IMAGES)),
+        prompt: buildPrompt(shot, input.productName, shotReferences.length, Boolean(anchor) && !isMain),
         size: size as never,
         quality: quality as never,
         output_format: "jpeg",
-        output_compression: 90,
+        output_compression: 92,
       });
       const b64 = response.data?.[0]?.b64_json;
       if (!b64) throw new Error("이미지 응답이 비어 있습니다.");
       if (input.signal?.aborted) return;
 
+      const bytes = Buffer.from(b64, "base64");
       const filename = `suite-${shot.kind}-${index + 1}.jpg`;
       const filePath = path.join(directory, filename);
-      await writeFile(filePath, Buffer.from(b64, "base64"));
+      await writeFile(filePath, bytes);
       const url = listingAssetUrl(input.listingId, filename);
       results[index] = { index, kind: shot.kind, scene: shot.scene, filePath, url };
       failed.delete(index);
+      if (isMain) anchor = { buffer: bytes, name: "approved-hero.jpg" };
       emit("image.shot_completed", {
         kind: shot.kind,
         index,
@@ -276,24 +345,27 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
     }
   };
 
-  // 전샷 동시 (동시성 6 상한).
-  const queue = shots.map((_, index) => index);
-  const workers = Array.from({ length: Math.min(GEN_CONCURRENCY, queue.length) }, async () => {
-    while (queue.length > 0) {
-      const index = queue.shift();
-      if (index === undefined) break;
-      await renderShot(index);
-    }
-  });
-  const allDone = Promise.all(workers);
+  // 대표 컷을 먼저 만든다 — 나머지 샷이 이걸 앵커로 삼아야 상품 일관성이 유지된다.
+  await Promise.race([renderShot(0), sleep(Math.max(1_000, budgetLeft()))]);
 
-  // 예산 안에 정착한 샷만 채택한다. 낙오 샷은 백그라운드에서 조용히 끝나더라도 이번 결과에 넣지 않는다.
-  await Promise.race([allDone, sleep(Math.max(1_000, budgetLeft()))]);
+  if (!input.signal?.aborted && shots.length > 1 && budgetLeft() > 8_000) {
+    const queue = shots.map((_, index) => index).slice(1);
+    const workers = Array.from({ length: Math.min(GEN_CONCURRENCY, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const index = queue.shift();
+        if (index === undefined) break;
+        if (budgetLeft() < 5_000 || input.signal?.aborted) break;
+        await renderShot(index);
+      }
+    });
+    // 예산 안에 정착한 샷만 채택한다. 낙오 샷은 백그라운드에서 조용히 끝나더라도 넣지 않는다.
+    await Promise.race([Promise.all(workers), sleep(Math.max(1_000, budgetLeft()))]);
+  }
 
-  // 예산이 20초 이상 남았을 때만, 3초 간격으로 실패 샷 직렬 재시도.
-  if (!input.signal?.aborted && failed.size > 0 && budgetLeft() > 20_000) {
+  // 예산이 넉넉히 남았을 때만 실패 샷을 직렬 재시도한다.
+  if (!input.signal?.aborted && failed.size > 0 && budgetLeft() > 30_000) {
     for (const index of [...failed]) {
-      if (budgetLeft() < 15_000 || input.signal?.aborted) break;
+      if (budgetLeft() < 25_000 || input.signal?.aborted) break;
       await sleep(3_000);
       await renderShot(index);
     }

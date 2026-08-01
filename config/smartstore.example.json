@@ -43,7 +43,7 @@
   "media": {
     "galleryCount": 2,
     "detailPanelCount": 6,
-    "quality": "low",
-    "mainQuality": "medium"
+    "quality": "high",
+    "mainQuality": "high"
   }
 }

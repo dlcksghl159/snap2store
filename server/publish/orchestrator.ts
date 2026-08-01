@@ -88,6 +88,13 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     await appendEvent(listingId, { source: "runtime", kind: "milestone", label, payload: payload ?? null });
   };
 
+  // 스위트 대표 컷이 먼저 끝나면 패널이 그것을 정체성 앵커로 쓴다.
+  // ⚠ await 하지 않는다 — 기다리면 패널이 대표 컷 뒤로 직렬화된다.
+  let heroPath: string | null = null;
+  void input.imageSuitePromise.then((suite) => {
+    heroPath = suite.main?.filePath ?? null;
+  });
+
   /* ── ① 거부 게이트 — 반드시 재료 생산 앞에 둔다 ── */
   if (draft.riskLevel === "high") {
     blockReasons.push(
@@ -304,6 +311,7 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
         productName: draft.title,
         specs,
         config,
+        anchorPath: () => heroPath,
         onShotEvent: (label, payload) => {
           // fire-and-forget — 반드시 catch. 영속 실패가 패널 생산을 죽이면 안 된다.
           void onEvent(label, payload).catch(console.warn);
@@ -443,7 +451,9 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     originResolved: origin.resolved && !origin.needsReview,
     salePrice: price.salePrice,
     tagCount: titleTags.tagResult.tags.length,
-    seoTitle: titleTags.seoResult.title,
+    // 확정된 상품명을 싣는다 — SEO 파이프라인이 무너져도 null 이 나가지 않는다.
+    seoTitle: titleTags.resolvedTitle,
+    titleStrategy: titleTags.seoResult.strategy,
     attributeCount: attributeAnalysis.applied.length,
     generatedImages:
       (imageSuite.main ? 1 : 0) + imageSuite.gallery.length + planPanels.panels.length,

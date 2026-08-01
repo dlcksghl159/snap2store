@@ -1,11 +1,15 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { toFile } from "openai";
-import sharp from "sharp";
 import { env } from "../env.js";
 import { sleep } from "../commerce/http.js";
 import { ensureListingAssetDirectory, listingAssetUrl } from "../store.js";
-import { getImageClient } from "./image-suite.js";
+import {
+  MAX_REFERENCE_IMAGES,
+  getImageClient,
+  prepareReferences,
+  type PreparedReference,
+} from "./image-suite.js";
 import type { SellerConfig } from "../seller-config.js";
 import type { DetailPanel, DetailPanelSpec, SectionRole } from "../../src/domain/types";
 
@@ -14,8 +18,12 @@ import type { DetailPanel, DetailPanelSpec, SectionRole } from "../../src/domain
  * "패널 예산 ≤ (목표 p95 − 에이전트+재료 실측)" 으로 역산해서 잡는다.
  * 초과해도 크래시가 아니라 저품질 완주(패널 일부 누락)가 실패 모드다.
  */
-const PANEL_BUDGET_MS = 110_000;
-const PANEL_CONCURRENCY = 6;
+function panelBudgetMs(quality: string): number {
+  if (quality === "high") return 210_000;
+  if (quality === "medium") return 150_000;
+  return 110_000;
+}
+const PANEL_CONCURRENCY = 4;
 const PANEL_SIZE = "1024x1536";
 
 /** 배경 연속성 — 전 패널이 같은 밝은 중성 배경을 가장자리까지 채운다. */
@@ -39,7 +47,12 @@ export const PANEL_LAYOUT: Record<SectionRole, string> = {
     "Generous negative space; the product small and centered low like a signature; Korean headline floating above — quiet, warm, final.",
 };
 
-function buildPanelPrompt(spec: DetailPanelSpec, productName: string): string {
+function buildPanelPrompt(
+  spec: DetailPanelSpec,
+  productName: string,
+  referenceCount: number,
+  hasAnchor: boolean,
+): string {
   return `Korean e-commerce detail-page panel (vertical 2:3) for: ${productName}.
 ${PANEL_LAYOUT[spec.role]}
 Scene: ${spec.sceneHint}
@@ -50,9 +63,17 @@ Typography: clean modern Korean sans-serif, dark charcoal (#222) on light backgr
 headline bold and large, subline smaller and lighter. Perfect spelling of the given strings.
 Background: seamless very light warm-neutral (${PANEL_BACKGROUND}) filling edge-to-edge, including the
 very top and bottom edges, so consecutive panels connect without visible seams.
-Product identity from the reference photo only: preserve exact shape, proportions, colors,
-materials, printed logos. Do NOT invent any other readable text, labels, badges, or brand
-marks. Do not alter the product.
+The attached ${referenceCount} reference photos are ALL of the SAME single product, shot from
+different angles — combine them into one consistent understanding of that exact object and never
+blend in a different product.${
+    hasAnchor
+      ? "\nThe LAST reference image is the approved studio hero of this product — match its rendering of the product exactly."
+      : ""
+  }
+Product identity from the reference photos only: preserve exact shape, silhouette, proportions,
+colors and their placement, materials, finish, part count, and printed logos. Do NOT invent any
+other readable text, labels, badges, or brand marks. Do not alter, restyle, or recolor the product.
+If a part of the product is not visible in the references, keep it out of frame — do not invent it.
 Premium commercial detail-page aesthetic, crisp focus, soft realistic lighting.`;
 }
 
@@ -64,26 +85,13 @@ export interface GenerateDetailPanelsInput {
   config: SellerConfig;
   onShotEvent: (label: string, payload: Record<string, unknown>) => void;
   signal?: AbortSignal;
+  /** 스위트 대표 컷이 이미 완성돼 있으면 정체성 앵커로 함께 넘긴다 (기다리지 않는다). */
+  anchorPath?: () => string | null;
 }
 
 export interface DetailPanelsResult {
   panels: DetailPanel[];
   warnings: string[];
-}
-
-async function prepareReference(photoPaths: string[]): Promise<Buffer> {
-  for (const photoPath of photoPaths) {
-    try {
-      return await sharp(photoPath, { failOn: "none" })
-        .rotate()
-        .resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true })
-        .png()
-        .toBuffer();
-    } catch {
-      continue;
-    }
-  }
-  throw new Error("패널 참조 사진을 준비하지 못했습니다.");
 }
 
 export async function generateDetailPanels(
@@ -97,30 +105,52 @@ export async function generateDetailPanels(
 
   const startedAt = Date.now();
   const directory = await ensureListingAssetDirectory(input.listingId);
-  const reference = await prepareReference(input.photoPaths);
+  // 업로드한 사진 전부를 참조로 넘긴다 — 한 장만 넘기면 보이지 않던 면을 모델이 창작한다.
+  const references = await prepareReferences(input.photoPaths);
   const total = input.specs.length;
   const results: (DetailPanel | null)[] = new Array(total).fill(null);
+
+  const anchorFor = async (): Promise<PreparedReference | null> => {
+    const anchor = input.anchorPath?.() ?? null;
+    if (!anchor) return null;
+    try {
+      const [prepared] = await prepareReferences([anchor], 1);
+      return prepared ? { ...prepared, name: "approved-hero.jpg" } : null;
+    } catch {
+      return null;
+    }
+  };
 
   const renderPanel = async (position: number): Promise<void> => {
     if (input.signal?.aborted) return;
     const spec = input.specs[position];
     const panelStartedAt = Date.now();
+    const anchor = await anchorFor();
+    const panelReferences = (anchor ? [...references, anchor] : references).slice(
+      0,
+      MAX_REFERENCE_IMAGES,
+    );
     input.onShotEvent("image.panel_started", {
       role: spec.role,
       headline: spec.headline,
       index: position,
       total,
+      referenceCount: panelReferences.length,
     });
 
     try {
       const response = await getImageClient().images.edit({
         model: env.OPENAI_IMAGE_MODEL,
-        image: await toFile(reference, "reference.png", { type: "image/png" }),
-        prompt: buildPanelPrompt(spec, input.productName),
+        image: await Promise.all(
+          panelReferences.map((reference) =>
+            toFile(reference.buffer, reference.name, { type: "image/jpeg" }),
+          ),
+        ),
+        prompt: buildPanelPrompt(spec, input.productName, panelReferences.length, Boolean(anchor)),
         size: PANEL_SIZE as never,
         quality: input.config.media.quality as never,
         output_format: "jpeg",
-        output_compression: 90,
+        output_compression: 92,
       });
       const b64 = response.data?.[0]?.b64_json;
       if (!b64) throw new Error("패널 응답이 비어 있습니다.");
@@ -163,8 +193,9 @@ export async function generateDetailPanels(
     }
   });
 
+  const budget = panelBudgetMs(input.config.media.quality);
   const elapsed = (): number => Date.now() - startedAt;
-  await Promise.race([Promise.all(workers), sleep(Math.max(1_000, PANEL_BUDGET_MS - elapsed()))]);
+  await Promise.race([Promise.all(workers), sleep(Math.max(1_000, budget - elapsed()))]);
 
   const panels = results.filter((panel): panel is DetailPanel => panel !== null);
   if (panels.length < total) {

@@ -79,8 +79,10 @@ const SellerConfigSchema = z.object({
     .object({
       galleryCount: z.number().int().min(0).max(4).default(2),
       detailPanelCount: z.number().int().min(0).max(8).default(6),
-      quality: z.enum(["low", "medium", "high"]).default("low"),
-      mainQuality: z.enum(["low", "medium", "high"]).default("medium"),
+      // 산출물 품질이 이 제품의 절반이다. 지연이 모자라면 여기가 아니라
+      // galleryCount / detailPanelCount 를 먼저 줄인다.
+      quality: z.enum(["low", "medium", "high"]).default("high"),
+      mainQuality: z.enum(["low", "medium", "high"]).default("high"),
     })
     .prefault({}),
 });
