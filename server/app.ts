@@ -5,6 +5,10 @@ import multer from "multer";
 import sharp from "sharp";
 import { writeFile } from "node:fs/promises";
 import { env, hasLiveSmartstoreCredentials } from "./env.js";
+import { linkHub } from "./link/hub.js";
+import { renderPhonePage } from "./link/phone-page.js";
+import { lanAddresses } from "./link/tls.js";
+import { TunnelUnavailableError, activeTunnelUrl, ensureTunnel } from "./link/tunnel.js";
 import { subscribeLiveEvents } from "./live-events.js";
 import { STREAM_PAGE_HTML } from "./stream-page.js";
 import {
@@ -272,6 +276,66 @@ export function createApp(): Express {
 
   app.get("/api/stream", (_req, res) => {
     subscribeLiveEvents(res);
+  });
+
+  // ── 폰 링크 ── 데스크톱이 세션을 만들고, 폰은 QR 로 /phone 에 들어와 WS 로 합류한다.
+  const linkUrls = (code: string) => {
+    const ips = lanAddresses();
+    const tunnel = activeTunnelUrl();
+    const lanUrls = ips.map((ip) => `https://${ip}:${env.LINK_HTTPS_PORT}/phone?s=${code}`);
+    // 터널이 켜져 있으면 그쪽이 첫 번째다 — 어느 네트워크에서든 열리고 인증서 경고도 없다.
+    const phoneUrls = tunnel ? [`${tunnel}/phone?s=${code}`, ...lanUrls] : lanUrls;
+    return {
+      code,
+      phoneUrl: phoneUrls[0] ?? null,
+      phoneUrls,
+      tunnel,
+      // QR 이 막혔을 때 폰에 직접 쳐 넣는 짧은 주소 — http(기본 스킴)로 받아 https 로 넘긴다.
+      manualHost: ips[0] ? `${ips[0]}:${env.AGENT_API_PORT}/p` : null,
+      httpsPort: env.LINK_HTTPS_PORT,
+    };
+  };
+
+  app.post("/api/link/sessions", (_req, res) => {
+    const { code } = linkHub.createSession();
+    res.status(201).json(linkUrls(code));
+  });
+
+  // 인터넷 터널 — 같은 와이파이 제약이 걸릴 때의 구조대. 서버 수명 동안 하나를 공유한다.
+  app.post("/api/link/tunnel", (_req, res) => {
+    ensureTunnel()
+      .then((url) => res.json({ ok: true, url }))
+      .catch((error: unknown) => {
+        const unavailable = error instanceof TunnelUnavailableError ? error : null;
+        res.status(503).json({
+          error: unavailable?.message ?? (error instanceof Error ? error.message : "터널 실패"),
+          installed: unavailable?.installed ?? true,
+        });
+      });
+  });
+
+  // 핫스팟 전환 등으로 IP 가 바뀌면 같은 코드로 주소만 다시 뽑는다.
+  app.get("/api/link/sessions/:code/urls", (req, res) => {
+    const code = String(req.params.code ?? "").toUpperCase();
+    if (!linkHub.sessionExists(code)) {
+      res.status(404).json({ error: "세션이 없습니다 — 새로 열어주세요." });
+      return;
+    }
+    res.json(linkUrls(code));
+  });
+
+  // 수동 입장 지름길 — 폰 브라우저는 스킴 없이 치면 http 로 붙는다. 여기서 https 폰 페이지로 보낸다.
+  app.get("/p", (req, res) => {
+    const ip = lanAddresses()[0] ?? "localhost";
+    const code = typeof req.query.s === "string" ? `?s=${encodeURIComponent(req.query.s)}` : "";
+    res.redirect(302, `https://${ip}:${env.LINK_HTTPS_PORT}/phone${code}`);
+  });
+
+  // 폰 페이지 — 프론트 빌드에 넣지 않는다. 빌드가 깨져도 폰 링크는 살아 있어야 한다.
+  // 코드 없이 열면 페이지 안에서 6자리 코드를 직접 입력해 입장한다.
+  app.get("/phone", (req, res) => {
+    const code = typeof req.query.s === "string" ? req.query.s.toUpperCase() : "";
+    res.type("html").send(renderPhonePage(code));
   });
 
   app.get("/stream", (_req, res) => {

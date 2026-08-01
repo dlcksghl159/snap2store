@@ -279,7 +279,9 @@ function HaltOverlay({
   onDismiss?: () => void;
   onOpenList?: () => void;
 }) {
-  const refused = listing.blockReasons.some((reason) => reason.includes("거부"));
+  // ⚠ "거부" 문자열 매칭은 오판을 만든다 — 네이버 API 거절 메시지에도 "거부"가 들어간다.
+  //   에이전트의 자율 거부 판정은 "고위험" 문구로만 식별한다.
+  const refused = listing.blockReasons.some((reason) => reason.includes("고위험"));
   const copy =
     terminal === "needs_review"
       ? refused

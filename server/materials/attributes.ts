@@ -204,8 +204,27 @@ ${buildCatalogPrompt(attributes, valuesBySeq)}`;
           discarded += 1;
           continue;
         }
+        // ⚠ 커머스 API 는 RANGE 속성에도 attributeValueSeq(그 속성의 값 행)를 NotNull 로
+        //   요구한다 — 비워 보내면 이 속성 하나가 아니라 **등록 전체가 400 으로 죽는다**.
+        //   대표 단위와 이름이 일치하는 행을 우선, 없으면 첫 행을 쓰고, 행 자체가 없으면
+        //   이 속성을 포기한다 (등록을 살리는 쪽이 항상 우선이다).
+        const unitRows = values.filter((value) => value.attributeSeq === attribute.attributeSeq);
+        const unitRow =
+          unitRows.find((value) => {
+            const name = value.attributeValueName ?? value.valueName ?? "";
+            return (
+              Boolean(attribute.representativeUnitCode) && name === attribute.representativeUnitCode
+            );
+          }) ??
+          unitRows[0] ??
+          null;
+        if (!unitRow) {
+          discarded += 1;
+          continue;
+        }
         applied.push({
           attributeSeq: attribute.attributeSeq,
+          attributeValueSeq: unitRow.attributeValueSeq,
           attributeRealValue: realValue,
           ...(attribute.unitUsable && attribute.representativeUnitCode
             ? { attributeRealValueUnitCode: attribute.representativeUnitCode }
@@ -246,12 +265,16 @@ ${buildCatalogPrompt(attributes, valuesBySeq)}`;
 
 /** 등록 페이로드용 productAttributes 배열. */
 export function toProductAttributesPayload(applied: AppliedAttribute[]): Array<Record<string, unknown>> {
-  return applied.map((entry) => ({
-    attributeSeq: entry.attributeSeq,
-    ...(entry.attributeValueSeq != null ? { attributeValueSeq: entry.attributeValueSeq } : {}),
-    ...(entry.attributeRealValue ? { attributeRealValue: entry.attributeRealValue } : {}),
-    ...(entry.attributeRealValueUnitCode
-      ? { attributeRealValueUnitCode: entry.attributeRealValueUnitCode }
-      : {}),
-  }));
+  return applied
+    // 마지막 그물 — attributeValueSeq 는 커머스 API NotNull. 불완전 항목 하나가
+    // 등록 전체를 400 으로 죽이게 두지 않는다.
+    .filter((entry) => entry.attributeValueSeq != null)
+    .map((entry) => ({
+      attributeSeq: entry.attributeSeq,
+      attributeValueSeq: entry.attributeValueSeq,
+      ...(entry.attributeRealValue ? { attributeRealValue: entry.attributeRealValue } : {}),
+      ...(entry.attributeRealValueUnitCode
+        ? { attributeRealValueUnitCode: entry.attributeRealValueUnitCode }
+        : {}),
+    }));
 }

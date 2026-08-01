@@ -35,9 +35,23 @@ const EnvironmentSchema = z.object({
   AGENT_MODE: z.enum(["auto", "demo", "openai"]).default("auto"),
   AGENT_API_PORT: z.coerce.number().int().min(1024).max(65535).default(8788),
 
+  // 폰 링크 — 폰 카메라(getUserMedia)는 보안 컨텍스트 필수라 LAN 접속용 HTTPS 포트를 따로 연다.
+  LINK_HTTPS_PORT: z.coerce.number().int().min(1024).max(65535).default(8443),
+  // auto = 부팅 때 cloudflared 퀵 터널을 미리 연다 (같은 와이파이 제약·인증서 경고 제거).
+  LINK_TUNNEL: z.enum(["off", "auto"]).default("off"),
+  // 발화 → 메모 서기의 기본 경로: 최신 realtime 모델이 소리를 직접 이해해 메모를 쓴다(1홉).
+  VOICE_REALTIME_MODEL: z.string().trim().default("gpt-realtime-2.1"),
+  // 자막(입력 전사) 사이드카 + 폴백 경로의 전사 모델. 정확도 우선 기본값.
+  VOICE_TRANSCRIBE_MODEL: z.string().trim().default("gpt-4o-transcribe"),
+  VOICE_LANGUAGE: z.string().trim().default("ko"),
+  // 폴백(전사+서기 2홉)에서 메모를 정리하는 텍스트 모델. 비우면 OPENAI_MODEL.
+  VOICE_SCRIBE_MODEL: z.string().trim().default(""),
+
   // 기본값은 실제 등록이다. dry-run 은 사람이 고르는 모드가 아니라
   // 시스템이 스스로 내려앉는 바닥이다 (화면에 노출하지 않는다).
   SMARTSTORE_MODE: z.enum(["dry-run", "live"]).default("live"),
+  // off = 판정·보류 게이트(고위험, KC 보류, 프리플라이트 차단)를 경고로만 남기고 완주한다.
+  RISK_GATE: z.enum(["on", "off"]).default("on"),
 
   NAVER_COMMERCE_CLIENT_ID: optionalSecret,
   NAVER_COMMERCE_CLIENT_SECRET: optionalEscapedSecret,
@@ -56,7 +70,14 @@ const parsed = EnvironmentSchema.parse({
   OPENAI_IMAGE_MODEL: process.env.OPENAI_IMAGE_MODEL,
   AGENT_MODE: process.env.AGENT_MODE,
   AGENT_API_PORT: process.env.AGENT_API_PORT,
+  LINK_HTTPS_PORT: process.env.LINK_HTTPS_PORT,
+  LINK_TUNNEL: process.env.LINK_TUNNEL,
+  VOICE_REALTIME_MODEL: process.env.VOICE_REALTIME_MODEL,
+  VOICE_TRANSCRIBE_MODEL: process.env.VOICE_TRANSCRIBE_MODEL,
+  VOICE_LANGUAGE: process.env.VOICE_LANGUAGE,
+  VOICE_SCRIBE_MODEL: process.env.VOICE_SCRIBE_MODEL,
   SMARTSTORE_MODE: process.env.SMARTSTORE_MODE,
+  RISK_GATE: process.env.RISK_GATE,
   NAVER_COMMERCE_CLIENT_ID: process.env.NAVER_COMMERCE_CLIENT_ID,
   NAVER_COMMERCE_CLIENT_SECRET: process.env.NAVER_COMMERCE_CLIENT_SECRET,
   COMMERCE_PROXY_URL: process.env.COMMERCE_PROXY_URL,

@@ -413,6 +413,11 @@ export function useRevealDirector({
   const [heldSlots, setHeldSlots] = useState<Set<string>>(() => new Set());
   const queueRef = useRef<FeedCard[]>([]);
   const seenRef = useRef(new Set<string>());
+  /**
+   * 이미 장착이 끝난 슬롯. ⚠ 어떤 이유로든(재시도·재방송·도구 재호출) 같은 슬롯의 카드가
+   * 또 와도, 화면에 걸린 내용을 다시 숨기지 않는다 — "나왔다 사라지기"의 원천 차단.
+   */
+  const dockedRef = useRef(new Set<string>());
   const busyRef = useRef(false);
   const nodeRef = useRef<HTMLDivElement | null>(null);
   const mountedAtRef = useRef(0);
@@ -437,11 +442,13 @@ export function useRevealDirector({
 
   const schedulePumpRef = useRef<() => void>(() => undefined);
 
-  /** 대기 중이거나 지금 떠 있는 카드의 슬롯 = 아직 장착 전. */
+  /** 대기 중이거나 지금 떠 있는 카드의 슬롯 = 아직 장착 전. 이미 장착된 슬롯은 절대 다시 숨기지 않는다. */
   const syncHeld = useCallback((current: FeedCard | null) => {
     const next = new Set<string>();
-    for (const card of queueRef.current) if (card.slot) next.add(card.slot);
-    if (current?.slot) next.add(current.slot);
+    for (const card of queueRef.current) {
+      if (card.slot && !dockedRef.current.has(card.slot)) next.add(card.slot);
+    }
+    if (current?.slot && !dockedRef.current.has(current.slot)) next.add(current.slot);
     setHeldSlots((previous) => {
       if (previous.size === next.size && [...previous].every((slot) => next.has(slot))) return previous;
       return next;
@@ -492,6 +499,10 @@ export function useRevealDirector({
 
   schedulePumpRef.current = schedulePump;
 
+  /** 상품군 카드만은 title 슬롯을 장착 완료로 치지 않는다 — 상품명 확정 리빌이 뒤에 온다. */
+  const marksDock = (card: FeedCard): boolean =>
+    Boolean(card.slot) && card.order !== REVEAL_ORDER.productGroup;
+
   // 새 산출물 감지 → 큐 적재
   useEffect(() => {
     let added = false;
@@ -499,8 +510,13 @@ export function useRevealDirector({
       if (seenRef.current.has(card.id)) continue;
       seenRef.current.add(card.id);
       // 마운트 직후 700ms 안에 도착하는 산출물(백필·새로고침)은 소리 없이 장착한다.
-      if (Date.now() - mountedAtRef.current < MOUNT_GRACE_MS) continue;
+      if (Date.now() - mountedAtRef.current < MOUNT_GRACE_MS) {
+        if (marksDock(card)) dockedRef.current.add(card.slot!);
+        continue;
+      }
       if (!card.slot) continue;
+      // 이미 장착된 슬롯의 재방송 카드 — 걸린 내용을 건드리지 않고 조용히 버린다.
+      if (dockedRef.current.has(card.slot)) continue;
       queueRef.current.push(card);
       added = true;
     }
@@ -520,6 +536,9 @@ export function useRevealDirector({
   // 종착·reduced-motion — 대기 중인 리빌을 전부 즉시 장착하고 오버레이를 끈다.
   useEffect(() => {
     if (!terminal && !reduced) return;
+    for (const card of queueRef.current) {
+      if (card.slot) dockedRef.current.add(card.slot);
+    }
     queueRef.current = [];
     busyRef.current = false;
     setActive(null);
@@ -564,11 +583,15 @@ export function useRevealDirector({
           fill: "both",
         }).finished.finally(() => {
           if (cancelled) return;
+          if (marksDock(active)) dockedRef.current.add(active.slot!);
           busyRef.current = false;
           setActive(null);
           syncHeld(null);
-          // 다음 카드도 유예를 거쳐 뽑는다 — 비행 중 도착분까지 순서에 포함시킨다.
-          schedulePump();
+          // 큐가 남아 있으면 **즉시** 다음 카드로 잇는다 — 카드 사이마다 딤이 꺼졌다
+          // 켜지면 같은 장면이 반복되는 스트로브로 읽힌다. 빈 큐일 때만 유예를 둔다
+          // (다음 뭉치를 모아 서사 순서로 정렬해 뽑기 위해).
+          if (queueRef.current.length > 0) pump();
+          else schedulePump();
         });
         return;
       }
@@ -592,11 +615,15 @@ export function useRevealDirector({
         )
         .finished.finally(() => {
           if (cancelled) return;
+          if (marksDock(active)) dockedRef.current.add(active.slot!);
           busyRef.current = false;
           setActive(null);
           syncHeld(null);
-          // 다음 카드도 유예를 거쳐 뽑는다 — 비행 중 도착분까지 순서에 포함시킨다.
-          schedulePump();
+          // 큐가 남아 있으면 **즉시** 다음 카드로 잇는다 — 카드 사이마다 딤이 꺼졌다
+          // 켜지면 같은 장면이 반복되는 스트로브로 읽힌다. 빈 큐일 때만 유예를 둔다
+          // (다음 뭉치를 모아 서사 순서로 정렬해 뽑기 위해).
+          if (queueRef.current.length > 0) pump();
+          else schedulePump();
         });
     }, enter + hold);
 
@@ -604,7 +631,7 @@ export function useRevealDirector({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [active, schedulePump, syncHeld, reduced, slotRef, terminal]);
+  }, [active, pump, schedulePump, syncHeld, reduced, slotRef, terminal]);
 
   const cardRef = useCallback((node: HTMLDivElement | null) => {
     nodeRef.current = node;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createListing, fetchListing, fetchListings, formatDate, formatPrice } from "./api";
-import { LandingVignette } from "./LandingVignette";
+import { PhoneLinkModal, PhoneStudio } from "./PhoneLink";
+import { usePhoneLink } from "./link-client";
 import { MissionControl, ResultShowcase } from "./Theater";
 import { FACT_KIND_LABEL, ROLE_LABEL } from "./stage-model";
 import type { ListingRecord } from "./domain/types";
@@ -80,6 +81,28 @@ export default function App() {
     [files, replaceFiles],
   );
 
+  /* ── 폰 링크 — 셔터가 트레이로, 말은 서기가 정리해 메모로 ── */
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
+  const noteRef = useRef(note);
+  noteRef.current = note;
+
+  const link = usePhoneLink({
+    onPhotoFile: (file) => addFilesRef.current([file]),
+    // 서기가 메모 전문을 다시 써서 보낸다 — 이어붙이지 않고 교체한다.
+    onNote: (text) => setNote(text.slice(0, 2000)),
+  });
+
+  /* 폰 셔터 비활성·카운트의 진실은 데스크톱 트레이다 — 변할 때마다 폰에 알린다. */
+  useEffect(() => {
+    if (link.phase === "live") link.sendTray(files.length, MAX_PHOTOS);
+  }, [files.length, link.phase, link.sendTray]);
+
+  /* 세션이 켜지는 순간, 이미 적어 둔 메모를 서기의 출발점으로 넘긴다. */
+  useEffect(() => {
+    if (link.phase === "live") link.sendNoteSeed(noteRef.current);
+  }, [link.phase, link.sendNoteSeed]);
+
   /* 목록 로딩 */
   const refreshListings = useCallback(() => {
     void fetchListings()
@@ -135,15 +158,16 @@ export default function App() {
   const showResult =
     activeListing != null && activeListing.status === "registered" && lingerDone && !controlVisible;
 
-  /* 스테이지가 떠 있는 동안 스크롤 잠금 */
+  /* 스테이지·폰 링크가 떠 있는 동안 스크롤 잠금 — parked 는 랜딩이 그대로 보이는 상태다 */
+  const linkOverlayVisible = link.phase !== "idle" && link.phase !== "parked";
   useEffect(() => {
-    if (!controlVisible && !detailListing) return;
+    if (!controlVisible && !detailListing && !linkOverlayVisible) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previous;
     };
-  }, [controlVisible, detailListing]);
+  }, [controlVisible, detailListing, linkOverlayVisible]);
 
   /* 드로어 Escape */
   useEffect(() => {
@@ -213,9 +237,7 @@ export default function App() {
   return (
     <>
       <header className="hdr">
-        <span className="wordmark">
-          Snap2Store<em>찍으면, 등록까지</em>
-        </span>
+        <span className="wordmark">Snap2Store</span>
         <nav className="nav">
           <button
             type="button"
@@ -255,7 +277,7 @@ export default function App() {
             files={files}
             previews={previews}
             note={note}
-            error={error}
+            error={error ?? link.error}
             submitting={submitting}
             inputRef={inputRef}
             firstThumbRef={firstThumbRef}
@@ -263,6 +285,10 @@ export default function App() {
             onRemove={removeFile}
             onNote={setNote}
             onStart={() => void start()}
+            onPhoneLink={link.start}
+            linkBusy={link.phase !== "idle" && link.phase !== "parked"}
+            linkParked={link.phase === "parked"}
+            voiceLive={link.phase === "live" && link.voice.status === "ready"}
           />
         )
       ) : (
@@ -303,6 +329,19 @@ export default function App() {
       {detailListing ? (
         <ListingDrawer listing={detailListing} onClose={() => setDetailListing(null)} />
       ) : null}
+
+      {link.phase === "creating" || link.phase === "waiting" ? (
+        <PhoneLinkModal link={link} onCancel={link.cancel} />
+      ) : null}
+
+      {link.phase === "live" || link.phase === "ending" ? (
+        <PhoneStudio
+          link={link}
+          trayCount={files.length}
+          trayMax={MAX_PHOTOS}
+          onClosed={link.park}
+        />
+      ) : null}
     </>
   );
 }
@@ -321,6 +360,10 @@ interface LandingViewProps {
   onRemove: (index: number) => void;
   onNote: (value: string) => void;
   onStart: () => void;
+  onPhoneLink: () => void;
+  linkBusy: boolean;
+  linkParked: boolean;
+  voiceLive: boolean;
 }
 
 function LandingView({
@@ -335,151 +378,196 @@ function LandingView({
   onRemove,
   onNote,
   onStart,
+  onPhoneLink,
+  linkBusy,
+  linkParked,
+  voiceLive,
 }: LandingViewProps) {
   const [over, setOver] = useState(false);
 
+  /* 스크린샷·복사한 이미지를 그대로 받는다 — 트레이가 이 화면의 주인공이다. */
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const pasted = event.clipboardData?.files;
+      if (pasted && pasted.length > 0) onPick(pasted);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [onPick]);
+
+  const openPicker = () => inputRef.current?.click();
+
   return (
     <main className="land">
-      <div className="land-hero">
-        <div className="land-copy">
-          <span className="dest-line rise">
-            <span className="dest-mark" aria-hidden>
-              N
-            </span>
-            네이버 스마트스토어 자동 등록 에이전트
+      <div className="aurora" aria-hidden>
+        <i />
+        <i />
+        <i />
+      </div>
+
+      <section className="hero">
+        <span className="dest-line rise">
+          <span className="dest-mark" aria-hidden>
+            N
           </span>
-          <h1 className="rise" style={{ "--i": 1 } as React.CSSProperties}>
-            팔 물건을 찍으면,
-            <br />
-            <em>등록까지 끝납니다.</em>
-          </h1>
-          <p className="land-sub rise" style={{ "--i": 2 } as React.CSSProperties}>
-            상품명 · 카테고리 · 판매가 · 상세페이지 · 검색 태그 · 원산지 · KC · 고시 —{" "}
-            <b>열 칸을 에이전트가 혼자 채웁니다.</b> 첫 입력 이후 사람은 아무것도 하지 않습니다.
-          </p>
+          스마트스토어
+        </span>
+        <h1 className="rise" style={{ "--i": 1 } as React.CSSProperties}>
+          찍으면, <em>등록까지.</em>
+        </h1>
+      </section>
 
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            multiple
-            hidden
-            onChange={(event) => {
-              if (event.target.files) onPick(event.target.files);
-              event.target.value = "";
-            }}
-          />
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        multiple
+        hidden
+        onChange={(event) => {
+          if (event.target.files) onPick(event.target.files);
+          event.target.value = "";
+        }}
+      />
 
-          <div
-            className={`drop rise ${over ? "over" : ""}`}
-            style={{ "--i": 3 } as React.CSSProperties}
-            role="button"
-            tabIndex={0}
-            onClick={() => inputRef.current?.click()}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                inputRef.current?.click();
-              }
-            }}
-            onDragOver={(event) => {
+      <section className="deck rise" style={{ "--i": 3 } as React.CSSProperties}>
+        <div
+          className={`tray ${over ? "over" : ""} ${files.length > 0 ? "filled" : ""}`}
+          role="button"
+          tabIndex={0}
+          aria-label="팔 물건 사진 올리기"
+          onClick={openPicker}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              setOver(true);
-            }}
-            onDragLeave={() => setOver(false)}
-            onDrop={(event) => {
-              event.preventDefault();
-              setOver(false);
-              if (event.dataTransfer.files) onPick(event.dataTransfer.files);
-            }}
-          >
-            {files.length === 0 ? (
-              <div className="drop-empty">
-                <span className="drop-icon" aria-hidden>
-                  <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.2l1-1.6A1 1 0 0 1 9.5 4h5a1 1 0 0 1 .85.4L16.3 6h1.2A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-8Z"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                    />
-                    <circle cx="12" cy="12.4" r="3.2" stroke="currentColor" strokeWidth="1.6" />
-                  </svg>
-                </span>
-                <span>
-                  <span className="drop-title">사진을 올리거나 여기로 끌어다 놓으세요</span>
-                  <span className="drop-hint">JPG · PNG · WEBP · HEIC · 최대 10장 · 모바일 카메라 지원</span>
-                </span>
-              </div>
-            ) : (
-              <div className="photo-grid">
-                {previews.map((url, index) => (
-                  <div className="photo-cell" key={url} style={{ "--i": index } as React.CSSProperties}>
-                    <img
-                      ref={index === 0 ? firstThumbRef : undefined}
-                      src={url}
-                      alt={`올린 사진 ${index + 1}`}
-                    />
-                    <button
-                      type="button"
-                      className="photo-remove"
-                      aria-label={`사진 ${index + 1} 제거`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onRemove(index);
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                {files.length < MAX_PHOTOS ? (
+              openPicker();
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setOver(true);
+          }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setOver(false);
+            if (event.dataTransfer.files) onPick(event.dataTransfer.files);
+          }}
+        >
+          {files.length === 0 ? (
+            <div className="tray-empty">
+              <span className="tray-glyph" aria-hidden>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.2l1-1.6A1 1 0 0 1 9.5 4h5a1 1 0 0 1 .85.4L16.3 6h1.2A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-8Z"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <circle cx="12" cy="12.4" r="3.2" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+              </span>
+            </div>
+          ) : (
+            <div className="photo-grid">
+              {previews.map((url, index) => (
+                <div className="photo-cell" key={url} style={{ "--i": index } as React.CSSProperties}>
+                  <img
+                    ref={index === 0 ? firstThumbRef : undefined}
+                    src={url}
+                    alt={`올린 사진 ${index + 1}`}
+                  />
                   <button
                     type="button"
-                    className="photo-add"
-                    aria-label="사진 더 추가"
+                    className="photo-remove"
+                    aria-label={`사진 ${index + 1} 제거`}
                     onClick={(event) => {
                       event.stopPropagation();
-                      inputRef.current?.click();
+                      onRemove(index);
                     }}
                   >
-                    +
+                    ✕
                   </button>
-                ) : null}
-              </div>
-            )}
+                </div>
+              ))}
+              {files.length < MAX_PHOTOS ? (
+                <button
+                  type="button"
+                  className="photo-add"
+                  aria-label="사진 더 추가"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    inputRef.current?.click();
+                  }}
+                >
+                  +
+                </button>
+              ) : null}
+            </div>
+          )}
+          <div className="tray-veil" aria-hidden>
+            <b>놓으면 담겨요</b>
           </div>
+        </div>
 
-          <details className="note-fold rise" style={{ "--i": 4 } as React.CSSProperties}>
-            <summary>추가로 알려줄 정보 (선택)</summary>
+        <aside className="deck-side">
+          <button
+            type="button"
+            className="link-cta"
+            onClick={onPhoneLink}
+            disabled={linkBusy}
+          >
+            <span className="link-cta-icon" aria-hidden>
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
+                <rect x="7" y="2.8" width="10" height="18.4" rx="2.6" stroke="currentColor" strokeWidth="1.5" />
+                <circle cx="12" cy="17.6" r="1.15" fill="currentColor" />
+                <path d="M10.4 5.4h3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </span>
+            <span className="link-cta-copy">
+              <b>{linkParked ? "핸드폰 연결됨" : "핸드폰으로 찍기"}</b>
+              {linkParked ? <small>다시 촬영은 폰에서</small> : null}
+            </span>
+            <span className="link-cta-arrow" aria-hidden>
+              →
+            </span>
+          </button>
+
+          <label className="note-block">
+            {voiceLive ? (
+              <span className="voice-chip voice-float">
+                <span className="voice-bars" aria-hidden>
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                받아 적는 중
+              </span>
+            ) : null}
             <textarea
               value={note}
               maxLength={2000}
               onChange={(event) => onNote(event.target.value)}
-              placeholder="브랜드 · 사이즈 · 구성품 · 상태 등. 없어도 등록은 끝까지 진행됩니다."
+              placeholder="브랜드 · 상태 · 가격"
             />
-          </details>
+          </label>
 
           {error ? <div className="inline-error">{error}</div> : null}
 
-          <div className="land-cta rise" style={{ "--i": 5 } as React.CSSProperties}>
-            <button type="button" className="btn btn-xl btn-primary" onClick={onStart} disabled={submitting}>
-              {submitting ? <span className="spinner" aria-hidden /> : null}
-              등록 시작 <span className="arrow">→</span>
-            </button>
-            <span className="drop-hint">
-              {files.length > 0 ? `사진 ${files.length}장 준비됨` : "사진 없이 눌러도 선택창이 열립니다"}
-            </span>
-          </div>
-        </div>
+          <button
+            type="button"
+            className="btn btn-xl btn-primary deck-start"
+            onClick={onStart}
+            disabled={submitting}
+          >
+            {submitting ? <span className="spinner" aria-hidden /> : null}
+            등록 시작
+            {files.length > 0 ? <span className="cta-count tnum">{files.length}</span> : null}
+            <span className="arrow">→</span>
+          </button>
+        </aside>
+      </section>
 
-        <div className="rise" style={{ "--i": 3 } as React.CSSProperties}>
-          <LandingVignette />
-        </div>
-      </div>
-
-      <div className="land-strip">
-        <span className="strip-title">에이전트가 혼자 밟는 7단계</span>
+      <footer className="land-strip">
         <ol className="rail">
           {PHASE_RAIL.map((label, index) => (
             <li key={label}>
@@ -495,7 +583,7 @@ function LandingView({
             Raw API Stream ↗
           </a>
         </div>
-      </div>
+      </footer>
     </main>
   );
 }
@@ -518,16 +606,24 @@ function LaunchOverlay({
   const [out, setOut] = useState(false);
   const armedRef = useRef(armed);
   const failedRef = useRef(failed);
+  const onDoneRef = useRef(onDone);
   armedRef.current = armed;
   failedRef.current = failed;
+  onDoneRef.current = onDone;
 
-  // 화질 규칙: 클론은 최대(중앙) 크기로 레이아웃하고 transform 으로 축소해서 시작한다.
-  const size = Math.min(window.innerHeight * 0.34, window.innerWidth * 0.3, 340);
-
+  /**
+   * ⚠ 이 이펙트는 비행 1회당 **정확히 한 번**만 돌아야 한다.
+   * 부모(App)는 실행 중 650ms 폴링으로 계속 리렌더되므로, onDone 같은
+   * 매 렌더 새 함수가 deps 에 들어가면 이펙트가 재실행되며 비행이 처음부터
+   * 다시 시작된다 — "사진이 무한히 날아가는" 사고의 원인. 콜백은 전부 ref 로 읽는다.
+   */
   useEffect(() => {
     const node = cloneRef.current;
     if (!node) return;
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const onDone = () => onDoneRef.current();
+    // 화질 규칙: 클론은 최대(중앙) 크기로 레이아웃하고 transform 으로 축소해서 시작한다.
+    const size = Math.min(window.innerHeight * 0.34, window.innerWidth * 0.3, 340);
 
     const centerX = window.innerWidth / 2 - size / 2;
     const centerY = window.innerHeight / 2 - size / 2;
@@ -616,7 +712,7 @@ function LaunchOverlay({
     return () => {
       cancelled = true;
     };
-  }, [flight.rect, onDone, size]);
+  }, [flight]);
 
   return (
     <div className={`launch ${veiled && !out ? "veiled" : ""} ${out ? "out" : ""}`} aria-hidden>

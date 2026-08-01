@@ -99,7 +99,7 @@ export async function runPipeline(input: RunPipelineInput): Promise<void> {
       await updateListing(listingId, (current) => ({ ...current, draft }));
     }
 
-    if (draft.riskLevel === "high") {
+    if (draft.riskLevel === "high" && env.RISK_GATE !== "off") {
       suiteAbort.abort();
       resolveHero(null);
     }

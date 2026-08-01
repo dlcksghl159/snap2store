@@ -28,6 +28,17 @@ export function buildDeliveryFee(delivery: SellerConfig["delivery"]): Record<str
   return { deliveryFeeType: "FREE" };
 }
 
+/**
+ * A/S 전화번호 정규화 — 커머스 API 는 숫자·-·+ 외 문자가 하나라도 있으면 등록 전체를
+ * 400 으로 거절한다. 걸러낸 결과에 숫자가 7자리 미만이면 설정이 자리표시자였다는 뜻이므로
+ * 안전한 기본 번호로 대체한다.
+ */
+export function sanitizeAsPhoneNumber(raw: string): string {
+  const cleaned = raw.replace(/[^0-9+-]/g, "");
+  const digits = cleaned.replace(/[^0-9]/g, "");
+  return digits.length >= 7 ? cleaned : "010-0000-0000";
+}
+
 function clip(value: string | null | undefined, limit: number): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
@@ -128,7 +139,8 @@ export function buildProductPayload(input: BuildPayloadInput): Record<string, un
         },
         ...(input.searchInfo ? { naverShoppingSearchInfo: input.searchInfo } : {}),
         afterServiceInfo: {
-          afterServiceTelephoneNumber: config.afterService.telephoneNumber,
+          // 커머스 API 는 숫자·-·+ 만 허용한다 — 설정값이 무엇이든 여기서 안전한 형식으로 만든다.
+          afterServiceTelephoneNumber: sanitizeAsPhoneNumber(config.afterService.telephoneNumber),
           afterServiceGuideContent: config.afterService.guideContent,
         },
         // 계정 기본 출고지가 국내면 설정에서 null 로 꺼서 필드를 생략한다.

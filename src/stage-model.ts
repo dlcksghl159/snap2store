@@ -268,7 +268,18 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
           url,
           tookMs: num(payload.tookMs) ?? 0,
         };
-        if (state.shots.some((existing) => existing.url === url)) return state;
+        // ⚠ 실런은 같은 샷을 다시 뱉을 수 있다(재시도·재생성·백로그 재전송).
+        //   어떤 경우에도 shotDone 은 세고, 카드는 "처음 온 index"에만 만든다 —
+        //   중복마다 카드를 만들면 이미 걸린 이미지가 리빌 대기로 숨었다 나타나기를 반복한다.
+        if (state.shots.some((existing) => existing.url === url)) {
+          return { ...state, shotDone: state.shotDone + 1 };
+        }
+        const replaceIndex = state.shots.findIndex((existing) => existing.index === shot.index);
+        if (replaceIndex >= 0) {
+          const shots = state.shots.slice();
+          shots[replaceIndex] = shot;
+          return { ...state, shots, shotDone: state.shotDone + 1 };
+        }
         const isMain = shot.index === 0;
         return {
           ...state,
@@ -303,7 +314,15 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
       const args = toolArgs(payload);
       if (event.label === "resolve_category") {
         // resolve_category 의 args 에서 productGroupName 을 뽑는다 — 첫 와우 모먼트.
+        // 에이전트가 도구를 재호출해도 카드는 한 번만 — 값은 조용히 갱신한다.
         const group = str(args.productGroupName);
+        if (state.productGroup) {
+          return {
+            ...state,
+            productGroup: group ?? state.productGroup,
+            productName: state.productName ?? group,
+          };
+        }
         return {
           ...state,
           productGroup: group ?? state.productGroup,
@@ -419,6 +438,17 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
               })
               .filter((entry) => entry.categoryPath)
           : state.categoryCandidates;
+        // 재호출 결과 — 값만 갱신, 카드 중복 금지 (칩이 숨었다 나타나기를 반복한다).
+        if (state.categoryPath) {
+          return {
+            ...state,
+            categoryPath: categoryPath ?? state.categoryPath,
+            categoryVerified: verified || state.categoryVerified,
+            categoryRounds: rounds,
+            categoryComps: comps,
+            categoryCandidates: candidates,
+          };
+        }
         return {
           ...state,
           categoryPath: categoryPath ?? state.categoryPath,
@@ -451,6 +481,10 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
         const price = num(output.salePriceKrw);
         const sample = num(output.sampleSize) ?? 0;
         if (price == null) return state;
+        // 재조회 — 가격만 갱신, 리빌 반복 금지.
+        if (state.price != null) {
+          return { ...state, price, priceSample: sample, priceBasis: str(output.basis) };
+        }
         return {
           ...state,
           price,
@@ -559,6 +593,8 @@ function applyMilestone(
       angle: str(payload.angle) ?? "",
       sections,
     };
+    // 기획 재시도(스키마 거부 후 재기획 등) — 내용만 갱신, 카드는 처음 한 번.
+    if (state.plan) return { ...state, plan };
     return {
       ...state,
       plan,
@@ -601,6 +637,13 @@ function applyMilestone(
       url,
       index,
     };
+    // 같은 index 재방출(재시도) — 값만 교체하고 리빌은 다시 열지 않는다.
+    const replaceIndex = state.panels.findIndex((existing) => existing.index === index);
+    if (replaceIndex >= 0) {
+      const panels = state.panels.slice();
+      panels[replaceIndex] = panel;
+      return { ...state, panels, panelTotal: num(payload.total) ?? state.panelTotal };
+    }
     return {
       ...state,
       panels: [...state.panels, panel].sort((a, b) => a.index - b.index),
@@ -629,6 +672,20 @@ function applyMilestone(
   if (label === "재료 생산 완료") {
     const confirmedTitle = str(payload.seoTitle);
     const titleStrategy = str(payload.titleStrategy);
+    // 재실행·재방송 — 값만 갱신하고 카드(상품명·필수 표시)는 다시 만들지 않는다.
+    if (state.seoTitle != null || state.noticeType != null || state.kcStatus != null) {
+      return {
+        ...state,
+        seoTitle: confirmedTitle ?? state.seoTitle,
+        tagCount: num(payload.tagCount) ?? state.tagCount,
+        attributeCount: num(payload.attributeCount) ?? state.attributeCount,
+        kcStatus: str(payload.kcStatus) ?? state.kcStatus,
+        noticeType: str(payload.noticeType) ?? state.noticeType,
+        originResolved:
+          typeof payload.originResolved === "boolean" ? payload.originResolved : state.originResolved,
+        price: num(payload.salePrice) ?? state.price,
+      };
+    }
     const titleCard = confirmedTitle
       ? [
           card(
