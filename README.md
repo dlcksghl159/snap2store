@@ -75,7 +75,8 @@ npm run build
 사진 업로드 (POST /api/listings)
     │
     ├──────────────► 이미지 스위트 프리워밍 (즉시 시작, 에이전트와 완전히 겹침)
-    │                 gpt-image-2 · 대표 1 + 갤러리 N · 하드 예산 70s
+    │                 gpt-image-2 · 업로드한 사진 **전부**를 참조로 (최대 16장)
+    │                 대표 컷을 먼저 만들고, 그 결과를 나머지 샷의 정체성 앵커로 재사용
     │                 (거부 판정이 나면 AbortSignal 로 즉시 취소된다)
     │
     └──► 에이전트 루프 (Agents SDK, 스트리밍)
@@ -191,6 +192,8 @@ npm run build
 - [ ] `COMMERCE_PROXY_URL` 이 등록된 고정 IP 를 가리킨다
 - [ ] `config/smartstore.local.json` 의 A/S 전화번호가 실번호다
 - [ ] `origin.mode` 가 `fixed` 다 (지연 −1~2초 + 실패 경로 제거)
+- [ ] `media.quality` 를 확인했다 — 기본값은 **`high`**(산출물 품질 우선). 무대 시간이
+      모자라면 품질을 낮추기 전에 `galleryCount` · `detailPanelCount` 를 먼저 줄인다
 - [ ] **카테고리 트리 캐시가 워밍돼 있다** (한 번 돌려 둔다 — 첫 런이 유난히 느려진다)
 - [ ] 시연 브라우저가 이 origin 의 **팝업을 허용**한다
 - [ ] 두 번째 화면에 `/stream` 이 **등록 시작 전에** 열려 있다
