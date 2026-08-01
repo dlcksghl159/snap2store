@@ -72,12 +72,19 @@ export function PhoneLinkModal({ link, onCancel }: { link: PhoneLinkApi; onCance
             {creating ? "여는 중" : "폰 대기 중"}
           </span>
           <b className="mono qr-code-mini">{link.session?.code ?? ""}</b>
+          {/* 터널이 없으면 이 QR 은 같은 와이파이에서만 열린다. 조용히 두면 폰이 안 붙는
+              이유를 아무도 모른 채 QR 만 노려보게 된다 — 실측으로 그렇게 시연이 막혔다. */}
           {tunnelOn ? (
             <span className="qr-net">
               <i aria-hidden />
               어디서나 접속
             </span>
-          ) : null}
+          ) : (
+            <span className="qr-net is-lan">
+              <i aria-hidden />
+              같은 와이파이만
+            </span>
+          )}
         </div>
 
         {stuck && link.phase === "waiting" ? (

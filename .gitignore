@@ -19,3 +19,6 @@ HOW-TO-USE.md
 # MediaPipe wasm — node_modules 에서 복사해 쓴다 (scripts/vendor-vision.mjs)
 public/vision/wasm/
 public/vision/models/efficientdet_lite2.tflite
+
+# 디자인 훅 캐시 — 로컬 산출물
+.impeccable/hook.cache.json

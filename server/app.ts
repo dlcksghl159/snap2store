@@ -7,6 +7,7 @@ import { writeFile } from "node:fs/promises";
 import { env, hasLiveSmartstoreCredentials } from "./env.js";
 import { linkHub } from "./link/hub.js";
 import { renderPhonePage } from "./link/phone-page.js";
+import { publicPhoneBase } from "./link/public-url.js";
 import { finalizeSellerNote } from "./link/scribe.js";
 import { lanAddresses } from "./link/tls.js";
 import { TunnelUnavailableError, activeTunnelUrl, ensureTunnel } from "./link/tunnel.js";
@@ -325,9 +326,9 @@ export function createApp(): Express {
   // ── 폰 링크 ── 데스크톱이 세션을 만들고, 폰은 QR 로 /phone 에 들어와 WS 로 합류한다.
   const linkUrls = (code: string) => {
     const ips = lanAddresses();
-    // 손으로 꽂은 공개 주소가 최우선이다 — 시연장에서 확실히 되는 길을 알고 있다면
-    // 자동 탐색(퀵 터널)이 그걸 이겨서는 안 된다.
-    const tunnel = env.LINK_PUBLIC_URL.replace(/\/+$/, "") || activeTunnelUrl();
+    // 손으로 꽂은 주소 → 터널 지킴이가 적어 둔 주소 → 이 프로세스가 띄운 터널 순.
+    // 지킴이는 서버 재시작과 무관하게 살아 있으므로 시연 중에는 그게 실질적인 진실이다.
+    const tunnel = publicPhoneBase() ?? activeTunnelUrl();
     const lanUrls = ips.map((ip) => `https://${ip}:${env.LINK_HTTPS_PORT}/phone?s=${code}`);
     // 터널이 켜져 있으면 그쪽이 첫 번째다 — 어느 네트워크에서든 열리고 인증서 경고도 없다.
     const phoneUrls = tunnel ? [`${tunnel}/phone?s=${code}`, ...lanUrls] : lanUrls;
@@ -381,6 +382,16 @@ export function createApp(): Express {
   // 코드 없이 열면 페이지 안에서 6자리 코드를 직접 입력해 입장한다.
   app.get("/phone", (req, res) => {
     const code = typeof req.query.s === "string" ? req.query.s.toUpperCase() : "";
+    /*
+      페이지가 폰까지 갔는지를 남긴다. 이 줄이 없으면 "폰이 안 붙는다"가 세 갈래로
+      갈린 채 구분이 안 된다 — 페이지를 못 받은 건지, 받고 게이트(카메라 권한)에서
+      막힌 건지, WS 가 막힌 건지. 실측 없이 짐작하다 시연 직전에 시간을 태웠다.
+    */
+    console.log(
+      `[phone] 페이지 요청 s=${code || "(없음)"} host=${req.headers.host ?? "?"} ua=${String(
+        req.headers["user-agent"] ?? "",
+      ).slice(0, 48)}`,
+    );
     res.type("html").send(renderPhonePage(code));
   });
 

@@ -8,15 +8,21 @@ import { useEyeLive, type PhoneEyeApi } from "./phone-eye";
  * 사람들은 "노트북 카메라에 핸드폰을 들어 보인다"는 발상 자체를 하지 못한다. 아무리 예쁜
  * 픽토그램도 없는 개념을 가르치지는 못한다.
  *
- * 그래서 세 겹으로 말한다.
+ * 그래서 두 겹으로 말한다.
  * 1. **거울.** 맥 카메라 화면을 그대로 작게 보여준다. 자기 모습이 보이는 순간
  *    "이 카메라가 지금 나를 보고 있다"가 설명 없이 전달된다 — 고지이자 초대다.
- * 2. **표적.** 그 위에 폰 모양 점선을 겹친다. 무엇을 어디에 놓으라는 건지가 그림으로 선다.
- * 3. **한 줄.** 그래도 첫 동작은 말로 시켜야 한다 — "핸드폰을 들어 보이세요".
+ * 2. **한 줄.** 그래도 첫 동작은 말로 시켜야 한다 — "핸드폰을 들어 보이세요".
  *    글자를 줄이는 것과 아무도 모르는 동작을 방치하는 것은 다른 문제다.
  *
- * 확신이 차오르면 테두리 링이 채워지고, 다 차면 QR 이 스스로 열린다.
- * 뜨거운 값(charge)은 useEyeLive 로만 읽는다 — 이 칸만 초당 11번 다시 그려진다.
+ * 한때 폰 모양 점선 표적을 겹쳤다가 뺐다. 얼굴 위에 격자가 얹힌 꼴이라 화면이 지저분해졌고,
+ * 정작 무엇을 하라는지는 옆의 한 줄이 이미 말하고 있었다.
+ *
+ * 폰이 보이면 이 원이 **제자리에서 1.5배로 뽀잉 커진다**. 확신 링이 차오르고, 다 차면
+ * QR 이 열린다.
+ *
+ * ⚠ 한때 화면 전체를 덮는 확대 무대를 만들었다가 걷어냈다. 카메라 하나 알아본 것에
+ * 화면을 통째로 내주는 건 사건의 크기에 안 맞는다 — 과시로 읽히고 부담스럽다.
+ * 알림은 알림의 크기로 한다.
  */
 export function EyeBadge({ eye, parked = false }: { eye: PhoneEyeApi; parked?: boolean }) {
   const live = useEyeLive(eye);
@@ -53,7 +59,6 @@ export function EyeBadge({ eye, parked = false }: { eye: PhoneEyeApi; parked?: b
       <span className="eye-view">
         {/* 거울상이어야 한다 — 좌우가 뒤집힌 화면에서는 자기 손을 못 따라간다. */}
         <video ref={videoRef} className="eye-cam" muted playsInline />
-        <span className="eye-target" aria-hidden />
         <span className="eye-ring" aria-hidden />
       </span>
       <span className="eye-say" aria-live="polite">

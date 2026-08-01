@@ -3,7 +3,7 @@ import { createApp } from "./app.js";
 import { env } from "./env.js";
 import { linkHub } from "./link/hub.js";
 import { ensureLinkTls, lanAddresses } from "./link/tls.js";
-import { ensureTunnel } from "./link/tunnel.js";
+import { ensureTunnelKeeper, publicPhoneBase } from "./link/public-url.js";
 
 /**
  * 무정지 완주 계약의 마지막 방어선.
@@ -27,7 +27,15 @@ const httpServer = app.listen(env.AGENT_API_PORT, "0.0.0.0", () => {
 });
 // 데스크톱은 Vite 프록시(ws)를 거쳐 이 포트로 /link 업그레이드를 보낸다.
 httpServer.on("upgrade", (request, socket, head) => {
-  if (!linkHub.handleUpgrade(request, socket, head)) socket.destroy();
+  if (!linkHub.handleUpgrade(request, socket, head)) {
+    // 거절도 남긴다 — 조용히 destroy 하면 폰에서는 그냥 "재연결 중"으로만 보인다.
+    console.warn(
+      `[link] 업그레이드 거절 url=${request.url ?? "?"} host=${request.headers.host ?? "?"} origin=${
+        request.headers.origin ?? "-"
+      }`,
+    );
+    socket.destroy();
+  }
 });
 
 /**
@@ -103,11 +111,26 @@ setInterval(() => {
   void syncPhoneLink();
 }, NETWORK_WATCH_MS).unref();
 
-// 시연 당일 설정: LINK_TUNNEL=auto 면 부팅과 동시에 공개 터널을 데워 둔다.
+/*
+  시연 당일 설정: LINK_TUNNEL=auto 면 부팅과 동시에 공개 터널을 데워 둔다.
+
+  ⚠ 지킴이(scripts/tunnel-keeper.mjs)가 이미 주소를 잡아 뒀으면 손대지 않는다.
+  trycloudflare 는 새 터널 요청이 잦으면 레이트 리밋(1015)을 건다 — 서버가 재시작할
+  때마다 하나씩 더 요청하면, 멀쩡히 살아 있는 지킴이의 터널을 두고도 리밋에 걸려
+  아무도 터널을 못 여는 상태가 된다. 실측으로 그렇게 시연 직전에 폰이 끊겼다.
+*/
+const KEEPER_WATCH_MS = 30_000;
+
 if (env.LINK_TUNNEL === "auto") {
-  void ensureTunnel().catch((error: unknown) => {
-    console.error(
-      `[tunnel] 자동 시작 실패 — LAN 모드로 계속합니다: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
+  // 지킴이가 있으면 터널은 그쪽 소관이다 — 살아 있는지만 확인하고, 없으면 띄운다.
+  ensureTunnelKeeper();
+  if (publicPhoneBase()) {
+    console.log("[tunnel] 공개 주소가 이미 잡혀 있습니다 — 새로 열지 않습니다");
+  }
+  /*
+    지킴이도 죽는다(터미널을 닫거나, 누가 kill 하거나). 그때 되살릴 사람이 사용자여선
+    안 된다 — 죽었다는 사실 자체가 화면에 안 보이기 때문이다. 30초마다 살아 있는지만
+    확인하고 없으면 다시 띄운다. PID 확인은 신호 0 한 번이라 값이 사실상 공짜다.
+  */
+  setInterval(ensureTunnelKeeper, KEEPER_WATCH_MS).unref();
 }

@@ -281,13 +281,28 @@ export function renderPhonePage(rawCode: string): string {
     els[id] = document.getElementById(id);
   });
 
+  /*
+    ── 터널 경유인가 ──
+    LAN 직결이면 사설망 IP 로 들어온다. 그게 아니면 공개 터널(cloudflared·ngrok)을
+    지나온 것이다.
+
+    ⚠ 이 구분이 중요한 이유: 최상위 티어는 H.264 4.5Mbps 다. LAN 은 그걸 삼키지만
+    무료 퀵 터널은 못 버텨서 연결이 통째로 끊기고, 폰 화면에는 "재연결 중…"만 반복된다.
+    사다리(ladderStep)는 자기 쪽 버퍼가 밀릴 때 내려가는데, 터널은 밀리기 전에 그냥
+    끊어 버려서 사다리가 손쓸 틈이 없다. 그래서 **시작 티어부터 낮춘다**.
+  */
+  /* ⚠ 이 파일은 템플릿 리터럴이다 — 백슬래시를 두 번 써야 폰까지 살아서 간다.
+     한 번만 쓰면 \\. 이 . 로, \\d 가 d 로 새어 나가 사설망 판정이 틀어진다(실측). */
+  var REMOTE = !/^(localhost$|127\\.|10\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[01])\\.)/.test(location.hostname);
+  var START_TIER = REMOTE ? 2 : 0;
+
   var state = {
     ws: null, wsReady: false, ended: false, parked: false, streaming: false,
     stream: null, actx: null, wakeLock: null,
     frameSeq: 0, photoSeq: 0, audioSeq: 0,
     shots: 0, trayMax: 10, trayFull: false,
     pumpTimer: 0, heartbeatTimer: 0, encodeBusy: false,
-    netTier: 0, pressure: 0, goodSince: 0, lastFrameAt: 0,
+    netTier: START_TIER, pressure: 0, goodSince: 0, lastFrameAt: 0,
     videoMode: "auto", encoder: null, codec: null, rafId: 0,
     forceKey: true, encodeSize: null, framesSinceKey: 0,
     retries: 0, captionTimer: 0, toastTimer: 0,
@@ -329,6 +344,19 @@ export function renderPhonePage(rawCode: string): string {
   } else if (!window.isSecureContext && !SIM && location.hostname !== "localhost") {
     fail("보안 연결(HTTPS)이 아니라 카메라를 열 수 없습니다. QR 의 주소 그대로 접속해 주세요.");
     els.startBtn.disabled = true;
+  } else {
+    /*
+      ⚠ 페이지가 열리는 즉시 붙는다 — 버튼을 기다리지 않는다.
+
+      예전에는 "카메라 연결"을 눌러야 WS 가 열렸다. 그래서 사용자가 버튼을 누르기 전까지
+      데스크톱은 폰이 왔는지조차 몰랐고, 서버 로그에도 아무 흔적이 없었다. 실측으로
+      페이지 요청은 찍히는데 합류가 없어서, 폰이 못 온 건지 안 누른 건지를 며칠 걸려도
+      구분할 수 없는 상태였다.
+
+      미디어는 여전히 버튼(사용자 제스처) 뒤에 열린다 — 카메라는 함부로 켜지 않는다.
+      여기서 여는 것은 신호선뿐이다.
+    */
+    connect();
   }
 
   /* ── 시작 ── */
@@ -337,19 +365,35 @@ export function renderPhonePage(rawCode: string): string {
     els.gateError.hidden = true;
     start().catch(function (error) {
       var name = error && error.name;
+      var why;
       if (name === "NotAllowedError") {
-        fail("카메라·마이크 권한이 거절됐어요. 브라우저 설정에서 허용한 뒤 다시 눌러 주세요.");
+        why = "카메라·마이크 권한이 거절됐어요. 브라우저 설정에서 허용한 뒤 다시 눌러 주세요.";
       } else if (name === "NotFoundError") {
-        fail("사용할 수 있는 카메라를 찾지 못했습니다.");
+        why = "사용할 수 있는 카메라를 찾지 못했습니다.";
+      } else if (name === "NotReadableError") {
+        why = "다른 앱이 카메라를 쓰고 있어요. 그 앱을 닫고 다시 눌러 주세요.";
       } else {
-        fail("카메라를 여는 데 실패했습니다: " + (error && error.message ? error.message : error));
+        why = "카메라를 여는 데 실패했습니다: " + (error && error.message ? error.message : error);
       }
+      fail(why);
+      // 실패 사실을 웹으로도 보낸다 — 폰 화면만 아는 고장은 고칠 수가 없다.
+      sendMsg({ t: "camera-fail", reason: String(name || "unknown"), message: why.slice(0, 120) });
     });
   });
 
+  /*
+    ⚠ 연결이 먼저다.
+
+    예전에는 openCamera() 가 끝나야 connect() 로 갔다. 그래서 카메라 권한이 거부되거나
+    다른 앱이 카메라를 쥐고 있으면 **WS 를 열어 보지도 못한 채** 게이트에 멈췄다 —
+    데스크톱은 "폰 대기 중"만 띄우고, 서버 로그에는 아무 흔적도 남지 않았다.
+    실측: 폰이 페이지는 받았는데(서버에 페이지 요청 로그는 있음) 합류가 없던 그 상태다.
+
+    먼저 붙고 나면 카메라가 실패해도 그 사실이 데스크톱과 로그에 남는다.
+  */
   async function start() {
+    connect(); // 이미 붙어 있으면 아무 일도 하지 않는다 (아래 가드)
     await openCamera();
-    connect();
     startPump();
     startAudio();
     requestWakeLock();
@@ -403,6 +447,8 @@ export function renderPhonePage(rawCode: string): string {
 
   function connect() {
     if (state.ended) return;
+    // 이미 열려 있거나 여는 중이면 새로 만들지 않는다 — 페이지 로드와 버튼이 둘 다 부른다.
+    if (state.ws && state.ws.readyState <= 1) return;
     var ws = new WebSocket(wsUrl());
     ws.binaryType = "arraybuffer";
     state.ws = ws;
@@ -577,7 +623,8 @@ export function renderPhonePage(rawCode: string): string {
     }
     if (buffered < goodThreshold) {
       if (!state.goodSince) state.goodSince = now;
-      else if (now - state.goodSince > 6000 && state.netTier > 0) {
+      // 터널에서는 START_TIER 아래로 못 내려간다 — 올라가는 순간 다시 끊긴다.
+      else if (now - state.goodSince > 6000 && state.netTier > START_TIER) {
         state.netTier -= 1;
         state.goodSince = now;
         return "retier";
@@ -701,7 +748,7 @@ export function renderPhonePage(rawCode: string): string {
     state.videoMode = "jpeg";
     window.cancelAnimationFrame(state.rafId);
     if (state.encoder) { try { state.encoder.close(); } catch (e) {} state.encoder = null; }
-    state.netTier = 0; state.pressure = 0; state.goodSince = 0;
+    state.netTier = START_TIER; state.pressure = 0; state.goodSince = 0;
     startJpegPump();
   }
 

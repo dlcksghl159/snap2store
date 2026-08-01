@@ -12,6 +12,7 @@ import {
   generateLinkCode,
   isValidLinkCode,
 } from "./protocol.js";
+import { publicPhoneBase } from "./public-url.js";
 import { NoteScribe } from "./scribe.js";
 import { lanAddresses } from "./tls.js";
 import { activeTunnelHostname } from "./tunnel.js";
@@ -141,19 +142,36 @@ class LinkHub {
     session.lastActivity = Date.now();
     lastSeenAt.set(ws, Date.now());
 
+    /*
+      연결 수명을 남긴다. 이게 없으면 "폰이 자꾸 끊긴다"를 눈으로 확인할 방법이 없다 —
+      끊긴 게 폰인지 망인지 서버인지, 몇 초 만에 끊겼는지가 전부 추측이 된다.
+      실측 없이 고치려다 시연 직전에 시간을 태웠다.
+    */
+    const joinedAt = Date.now();
+    let bytesIn = 0;
+    console.log(`[link] ${session.code} ${role} 합류`);
+
     ws.on("pong", () => lastSeenAt.set(ws, Date.now()));
 
     ws.on("message", (data, isBinary) => {
       session.lastActivity = Date.now();
       lastSeenAt.set(ws, Date.now());
       if (isBinary) {
+        bytesIn += toBuffer(data).byteLength;
         if (role === "phone") this.routePhoneBinary(session, data);
         return;
       }
       this.routeText(session, role, data);
     });
 
-    ws.on("close", () => {
+    ws.on("close", (code, reason) => {
+      const heldMs = Date.now() - joinedAt;
+      const kbps = heldMs > 0 ? Math.round((bytesIn * 8) / heldMs) : 0;
+      console.log(
+        `[link] ${session.code} ${role} 종료 — ${Math.round(heldMs / 1000)}초 유지 · ` +
+          `수신 ${(bytesIn / 1024 / 1024).toFixed(1)}MB (평균 ${kbps}kbps) · ` +
+          `code=${code}${reason?.length ? ` reason=${String(reason).slice(0, 60)}` : ""}`,
+      );
       if (session[role] !== ws) return; // 교체된 옛 소켓
       session[role] = null;
       this.sendTo(session, role === "phone" ? "desktop" : "phone", {
@@ -276,6 +294,16 @@ class LinkHub {
         session.dropVideoUntilKey = true;
         session.lastKeyRequestAt = 0;
         this.openVoice(session);
+        this.sendTo(session, "desktop", message);
+        return;
+      }
+      case "camera-fail": {
+        // 폰 화면에만 뜨는 고장은 고칠 수가 없다 — 서버 로그와 데스크톱 양쪽에 남긴다.
+        console.warn(
+          `[link] ${session.code} 폰 카메라 실패 — ${String(message.reason ?? "?")}: ${String(
+            message.message ?? "",
+          ).slice(0, 120)}`,
+        );
         this.sendTo(session, "desktop", message);
         return;
       }
@@ -472,7 +500,24 @@ function originAllowed(origin: string | undefined): boolean {
   if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]") {
     return true;
   }
+  /*
+    ⚠ 터널 호스트는 **두 경로 모두** 봐야 한다.
+    - activeTunnelHostname(): 이 프로세스가 직접 띄운 터널
+    - publicPhoneBase(): 지킴이(외부 프로세스)나 LINK_PUBLIC_URL 이 잡아 둔 주소
+
+    실측 사고: 터널을 지킴이로 분리하면서 QR 주소만 새 경로로 바꾸고 이 가드는 옛 경로만
+    보게 뒀다. 그 결과 터널로 들어온 **브라우저만** 403 으로 막혔다 — Node 테스트
+    클라이언트는 Origin 을 안 보내 통과했기 때문에, 검증은 계속 초록불이었다.
+  */
   if (hostname === activeTunnelHostname()) return true;
+  const publicBase = publicPhoneBase();
+  if (publicBase) {
+    try {
+      if (hostname === new URL(publicBase).hostname) return true;
+    } catch {
+      /* 형식이 깨진 주소는 없는 셈 친다 */
+    }
+  }
   return lanAddresses().includes(hostname);
 }
 

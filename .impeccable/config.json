@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "bounce-easing",
+        "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "createdAt": "2026-08-01T20:49:00.494Z",
+        "reason": "사용자가 '뽀잉하고 커지는 효과'로 직접 요청하고 결과를 확인한 알림 팝. 반복 진동 bounce 가 아니라 1회 오버슈트 후 정착(back-out)이고, 폰 인식이라는 순간 신호에만 쓴다. 되돌아갈 때는 오버슈트 없이 ease-out."
+      }
+    ]
+  }
+}
