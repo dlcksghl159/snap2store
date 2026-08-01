@@ -3,6 +3,7 @@ import { formatDate, formatElapsed, formatPrice } from "./api";
 import { ListingFrame, RevealCard, useRevealDirector } from "./Assembly";
 import {
   PHASES,
+  REVEAL_ORDER,
   ROLE_LABEL,
   SCENE_HEADLINE,
   SCENE_SUB,
@@ -125,15 +126,46 @@ export function MissionControl({
     [derived.panels, derived.shots],
   );
 
+  /**
+   * 아직 도착하지 않았지만 곧 올 산출물의 서사 순번.
+   * 리빌 디렉터가 이걸 보고 앞 순번을 기다린다 — 병렬 실행이어도 화면은 순서대로 읽힌다.
+   */
+  const expectedOrders = useMemo(() => {
+    const pending: number[] = [];
+    if (!derived.productGroup) pending.push(REVEAL_ORDER.productGroup);
+    if (!derived.categoryPath) pending.push(REVEAL_ORDER.category);
+    if (!derived.shots.some((shot) => shot.index === 0)) pending.push(REVEAL_ORDER.mainImage);
+    if (derived.shotDone < derived.shotStarts) pending.push(REVEAL_ORDER.gallery);
+    if (derived.price == null) pending.push(REVEAL_ORDER.price);
+    if (!derived.seoTitle) pending.push(REVEAL_ORDER.title);
+    if (!derived.noticeType) pending.push(REVEAL_ORDER.requiredFields);
+    if (derived.planStarted && !derived.plan) pending.push(REVEAL_ORDER.detailPlan);
+    return pending;
+  }, [
+    derived.categoryPath,
+    derived.noticeType,
+    derived.plan,
+    derived.planStarted,
+    derived.price,
+    derived.productGroup,
+    derived.seoTitle,
+    derived.shotDone,
+    derived.shotStarts,
+    derived.shots,
+  ]);
+
   const reveal = useRevealDirector({
     cards: derived.cards,
     slotRef,
     terminal: isTerminal,
+    expectedOrders,
     shotUrlBySlot,
   });
 
   const headline = SCENE_HEADLINE[scene] ?? derived.liveLabel ?? listing.stageLabel;
-  const finalTitle = listing.materials?.registrationTitle ?? listing.draft?.title ?? null;
+  // 상품명 2단 착지는 **한 번만** 일어난다: 상품군 → 확정된 등록 상품명.
+  // draft.title 을 중간에 끼우면 교체가 두 번 일어나 "대충 만든 이름"으로 읽힌다.
+  const finalTitle = listing.materials?.registrationTitle ?? null;
   const revealMedia = reveal.card?.slot ? shotUrlBySlot(reveal.card.slot) : null;
 
   return (

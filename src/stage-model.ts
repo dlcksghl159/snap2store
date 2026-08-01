@@ -22,8 +22,29 @@ export interface PlanView {
   sections: Array<{ role: string; heading: string; hasPanel: boolean }>;
 }
 
+/**
+ * 리빌 표시 순서 — 등록 서사 그대로다.
+ * 파이프라인은 최단시간을 위해 병렬로 돌기 때문에 산출물 **도착 순서가 매번 다르다**.
+ * 도착 순서로 보여 주면 관객이 이야기를 못 따라오므로, 표시 순서만 여기서 고정한다.
+ * (파이프라인 실행 순서는 건드리지 않는다 — 연출과 실행을 분리한다.)
+ */
+export const REVEAL_ORDER = {
+  productGroup: 10,
+  category: 20,
+  mainImage: 30,
+  gallery: 40,
+  price: 50,
+  title: 60,
+  requiredFields: 70,
+  detailPlan: 80,
+  detailPanel: 90,
+  other: 100,
+} as const;
+
 export interface FeedCard {
   id: string;
+  /** 이벤트 seq — 같은 order 안에서 도착 순서를 유지하는 타이브레이커. */
+  seq: number;
   at: string;
   channel: string;
   kicker: string;
@@ -33,6 +54,23 @@ export interface FeedCard {
   tech: string | null;
   slot: string | null;
   size: "hero" | "medium" | "quick";
+  /** 낮을수록 먼저 보여 준다. 도착 순서가 아니라 이 값이 순서를 정한다. */
+  order?: number;
+}
+
+/** 슬롯이 서사 위치를 이미 말해 준다 — 예외인 카드만 order 를 직접 준다. */
+export function revealOrderForSlot(slot: string | null): number {
+  if (!slot) return REVEAL_ORDER.other;
+  if (slot === "title") return REVEAL_ORDER.productGroup;
+  if (slot === "crumb") return REVEAL_ORDER.category;
+  if (slot === "thumb") return REVEAL_ORDER.mainImage;
+  if (slot.startsWith("gallery-")) return REVEAL_ORDER.gallery;
+  if (slot === "price") return REVEAL_ORDER.price;
+  if (slot === "tags") return REVEAL_ORDER.title;
+  if (slot === "meta") return REVEAL_ORDER.requiredFields;
+  if (slot === "plan") return REVEAL_ORDER.detailPlan;
+  if (slot.startsWith("panel-")) return REVEAL_ORDER.detailPanel;
+  return REVEAL_ORDER.other;
 }
 
 export interface ControlDerived {
@@ -163,8 +201,17 @@ const RUNNING_STAGES = new Set<ListingStage>([
   "publishing",
 ]);
 
-function card(input: Omit<FeedCard, "id">, seq: number): FeedCard {
-  return { ...input, id: `c${seq}` };
+/**
+ * ⚠ 한 이벤트가 카드를 둘 이상 만들 수 있다 (재료 생산 완료 → 상품명 + 필수 표시 항목).
+ * id 를 seq 만으로 만들면 둘이 겹쳐 뒤엣것이 중복으로 걸러지고 화면에서 조용히 사라진다.
+ */
+function card(input: Omit<FeedCard, "id" | "seq">, seq: number): FeedCard {
+  return {
+    ...input,
+    seq,
+    id: `c${seq}-${input.slot ?? input.kicker}`,
+    order: input.order ?? revealOrderForSlot(input.slot),
+  };
 }
 
 /* ── 리듀서 ──────────────────────────────────────────────────── */
@@ -227,6 +274,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                 tech: "gpt-image-2 · 올린 사진을 재료로 생성",
                 slot: isMain ? "thumb" : `gallery-${Math.max(0, shot.index - 1)}`,
                 size: isMain ? "hero" : "medium",
+                order: isMain ? REVEAL_ORDER.mainImage : REVEAL_ORDER.gallery,
               },
               seq,
             ),
@@ -258,6 +306,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                 tech: "resolve_category · 에이전트가 직접 호출",
                 slot: "title",
                 size: "hero",
+                order: REVEAL_ORDER.productGroup,
               },
               seq,
             ),
@@ -280,6 +329,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                 tech: "research_market_price",
                 slot: null,
                 size: "quick",
+                order: REVEAL_ORDER.other,
               },
               seq,
             ),
@@ -303,6 +353,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                 tech: "hosted web_search",
                 slot: null,
                 size: "medium",
+                order: REVEAL_ORDER.other,
               },
               seq,
             ),
@@ -325,6 +376,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                 tech: "generate_image_suite · 논블로킹",
                 slot: null,
                 size: "quick",
+                order: REVEAL_ORDER.other,
               },
               seq,
             ),
@@ -373,6 +425,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                 tech: `같은 상품군 모델 ${comps}건 투표 · 검증 ${rounds}라운드`,
                 slot: "crumb",
                 size: "hero",
+                order: REVEAL_ORDER.category,
               },
               seq,
             ),
@@ -408,6 +461,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
                     : "시세 표본 없음 — 사진·상품 정보 근거 추정",
                 slot: "price",
                 size: "hero",
+                order: REVEAL_ORDER.price,
               },
               seq,
             ),
@@ -438,6 +492,7 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
               tech: null,
               slot: null,
               size: "medium",
+              order: REVEAL_ORDER.other,
             },
             seq,
           ),
@@ -505,6 +560,7 @@ function applyMilestone(
             tech: `${sections.length}개 섹션 · 패널 ${num(payload.panelCount) ?? 0}컷 설계`,
             slot: "plan",
             size: "hero",
+            order: REVEAL_ORDER.detailPlan,
           },
           seq,
         ),
@@ -547,6 +603,7 @@ function applyMilestone(
             tech: "gpt-image-2 · 세로 2:3 패널",
             slot: `panel-${index}`,
             size: "medium",
+            order: REVEAL_ORDER.detailPanel,
           },
           seq,
         ),
@@ -555,9 +612,34 @@ function applyMilestone(
   }
 
   if (label === "재료 생산 완료") {
+    const confirmedTitle = str(payload.seoTitle);
+    const titleStrategy = str(payload.titleStrategy);
+    const titleCard = confirmedTitle
+      ? [
+          card(
+            {
+              at,
+              channel: "milestone",
+              kicker: "상품명 확정",
+              title: confirmedTitle,
+              detail: `${confirmedTitle.length}자`,
+              why: "검색창에 뭘 치는지가 노출을 정합니다 — 상품군 명사를 앞에 두고 검색 어휘로 다시 씁니다",
+              tech:
+                titleStrategy === "composed"
+                  ? "근거 토큰 조합 · 발명 단어 차단"
+                  : `어순 전략 ${titleStrategy ?? "accuracy"} · 검색 수요 최대 조합`,
+              slot: "title",
+              size: "hero",
+              order: REVEAL_ORDER.title,
+            },
+            seq,
+          ),
+        ]
+      : [];
+
     return {
       ...state,
-      seoTitle: str(payload.seoTitle) ?? state.seoTitle,
+      seoTitle: confirmedTitle ?? state.seoTitle,
       tagCount: num(payload.tagCount) ?? state.tagCount,
       attributeCount: num(payload.attributeCount) ?? state.attributeCount,
       kcStatus: str(payload.kcStatus) ?? state.kcStatus,
@@ -567,6 +649,7 @@ function applyMilestone(
       price: num(payload.salePrice) ?? state.price,
       cards: [
         ...state.cards,
+        ...titleCard,
         card(
           {
             at,
@@ -584,6 +667,7 @@ function applyMilestone(
             tech: `검색 태그 ${num(payload.tagCount) ?? 0}개 · 상품속성 ${num(payload.attributeCount) ?? 0}건`,
             slot: "meta",
             size: "hero",
+            order: REVEAL_ORDER.requiredFields,
           },
           seq,
         ),
@@ -613,6 +697,7 @@ function applyMilestone(
             tech: null,
             slot: null,
             size: "medium",
+            order: REVEAL_ORDER.other,
           },
           seq,
         ),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ControlDerived, FeedCard } from "./stage-model";
-import { ROLE_LABEL } from "./stage-model";
+import { REVEAL_ORDER, ROLE_LABEL } from "./stage-model";
 
 /* ═════════ 조립 틀 ═════════
    스마트스토어 상품 페이지 모양의 틀. 빈 슬롯이 스스로 칸 이름을 말한다 — 회색 사각형 금지. */
@@ -345,6 +345,14 @@ function kcLabel(status: string | null): string {
    산출물이 완성될 때마다 화면 중앙에 크게 등장했다가 축소되며 슬롯에 장착된다 (FLIP + WAAPI). */
 
 const MOUNT_GRACE_MS = 700;
+/**
+ * 정렬 유예 — 병렬 파이프라인은 산출물을 몇십 ms 간격으로 몰아서 뱉는다.
+ * 첫 도착을 즉시 띄우면 그 뭉치의 순서가 도착 순서로 굳는다.
+ * 이만큼 모았다가 order 순으로 뽑으면 이야기 순서가 유지되고, 지연은 눈에 띄지 않는다.
+ */
+const SETTLE_MS = 420;
+/** 앞 순번을 기다리는 인내 상한. 넘으면 순서를 포기하고 보여 준다 (정지보다는 순서 깨짐이 낫다). */
+const ORDER_PATIENCE_MS = 20_000;
 
 function holdMs(size: FeedCard["size"], backlog: number): number {
   if (backlog > 4) return 260;
@@ -366,6 +374,12 @@ export interface RevealDirectorOptions {
   cards: FeedCard[];
   slotRef: (key: string) => HTMLElement | null;
   terminal: boolean;
+  /**
+   * 아직 도착하지 않았지만 곧 올 산출물의 order 값들.
+   * 대기 중인 카드보다 낮은 순번이 여기 남아 있으면 그게 올 때까지 기다린다 —
+   * 병렬 파이프라인에서도 화면은 등록 서사 순서로 읽힌다.
+   */
+  expectedOrders: number[];
   shotUrlBySlot: (slot: string) => string | null;
 }
 
@@ -379,6 +393,7 @@ export function useRevealDirector({
   cards,
   slotRef,
   terminal,
+  expectedOrders,
   shotUrlBySlot,
 }: RevealDirectorOptions): RevealState {
   const [active, setActive] = useState<FeedCard | null>(null);
@@ -398,13 +413,58 @@ export function useRevealDirector({
     mountedAtRef.current = Date.now();
   }, []);
 
+  const settleTimerRef = useRef<number | null>(null);
+  const headSinceRef = useRef<number>(0);
+  const headIdRef = useRef<string | null>(null);
+  const expectedRef = useRef<number[]>(expectedOrders);
+  const terminalRef = useRef(terminal);
+  expectedRef.current = expectedOrders;
+  terminalRef.current = terminal;
+
+  const schedulePumpRef = useRef<() => void>(() => undefined);
+
+  /**
+   * 표시 순서는 도착 순서가 아니라 `order`(등록 서사)가 정한다.
+   * 같은 order 안에서는 도착 순서를 유지한다.
+   * 아직 안 온 앞 순번이 있으면 인내 상한까지 기다린다 — 상한이 없으면 한 갈래가
+   * 실패했을 때 나머지 산출물이 영영 안 보인다.
+   */
   const pump = useCallback(() => {
     if (busyRef.current) return;
-    const next = queueRef.current.shift();
-    if (!next) return;
+    if (queueRef.current.length === 0) return;
+    queueRef.current.sort(
+      (a, b) => (a.order ?? REVEAL_ORDER.other) - (b.order ?? REVEAL_ORDER.other) || a.seq - b.seq,
+    );
+    const next = queueRef.current[0];
+
+    if (headIdRef.current !== next.id) {
+      headIdRef.current = next.id;
+      headSinceRef.current = Date.now();
+    }
+
+    const waitingForEarlier =
+      !terminalRef.current &&
+      expectedRef.current.some((order) => order < (next.order ?? REVEAL_ORDER.other));
+    if (waitingForEarlier && Date.now() - headSinceRef.current < ORDER_PATIENCE_MS) {
+      schedulePumpRef.current();
+      return;
+    }
+
+    queueRef.current.shift();
     busyRef.current = true;
     setActive(next);
   }, []);
+
+  /** 유예 동안 도착분을 모았다가 한 번에 정렬해 뽑는다. */
+  const schedulePump = useCallback(() => {
+    if (settleTimerRef.current !== null) return;
+    settleTimerRef.current = window.setTimeout(() => {
+      settleTimerRef.current = null;
+      pump();
+    }, SETTLE_MS);
+  }, [pump]);
+
+  schedulePumpRef.current = schedulePump;
 
   // 새 산출물 감지 → 큐 적재
   useEffect(() => {
@@ -418,8 +478,15 @@ export function useRevealDirector({
       queueRef.current.push(card);
       added = true;
     }
-    if (added) pump();
-  }, [cards, pump]);
+    if (added) schedulePump();
+  }, [cards, schedulePump]);
+
+  useEffect(
+    () => () => {
+      if (settleTimerRef.current !== null) window.clearTimeout(settleTimerRef.current);
+    },
+    [],
+  );
 
   // 종착·reduced-motion — 대기 중인 리빌을 전부 즉시 장착하고 오버레이를 끈다.
   useEffect(() => {
@@ -469,7 +536,8 @@ export function useRevealDirector({
           if (cancelled) return;
           busyRef.current = false;
           setActive(null);
-          pump();
+          // 다음 카드도 유예를 거쳐 뽑는다 — 비행 중 도착분까지 순서에 포함시킨다.
+          schedulePump();
         });
         return;
       }
@@ -495,7 +563,8 @@ export function useRevealDirector({
           if (cancelled) return;
           busyRef.current = false;
           setActive(null);
-          pump();
+          // 다음 카드도 유예를 거쳐 뽑는다 — 비행 중 도착분까지 순서에 포함시킨다.
+          schedulePump();
         });
     }, enter + hold);
 
@@ -503,7 +572,7 @@ export function useRevealDirector({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [active, pump, reduced, slotRef, terminal]);
+  }, [active, schedulePump, reduced, slotRef, terminal]);
 
   const cardRef = useCallback((node: HTMLDivElement | null) => {
     nodeRef.current = node;
