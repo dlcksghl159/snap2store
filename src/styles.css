@@ -287,6 +287,25 @@ textarea {
   pointer-events: auto;
 }
 
+/* 만든 자리 — 제품명 왼쪽에 서되 제품명을 이기지 않는다. 작고 흐리게, 대문자 트래킹으로. */
+.hdr-credit {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.hdr-credit::after {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 11px;
+  margin: 0 0 -1px 14px;
+  background: var(--line);
+  vertical-align: middle;
+}
+
 .wordmark {
   display: inline-flex;
   align-items: baseline;
@@ -480,12 +499,13 @@ textarea {
 
 /* ── 랜딩 — 촬영 덱이 주인공이다 ─────────────────────────────── */
 
+/* 하단 스트립을 걷어냈다 — 히어로와 덱, 두 행만 남는다. */
 .land {
   position: relative;
   min-height: 100dvh;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  padding: 56px clamp(20px, 4vw, 48px) 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 56px clamp(20px, 4vw, 48px) clamp(20px, 3vh, 40px);
   max-width: 1280px;
   margin: 0 auto;
   width: 100%;
@@ -612,10 +632,92 @@ textarea {
   color: var(--blue);
 }
 
+/* ── 히어로 한 줄 — Snap → N Smartstore ──
+   설명은 화살표가 한다. 두 단어는 같은 무게로 두고 색을 주지 않는다 — 색이 들어가는
+   순간 한쪽이 결론처럼 읽히고, 이 줄은 "여기서 저기로"가 전부다.
+
+   ⚠ 자간과 굵기가 이 줄의 인상을 다 결정한다. 800/-0.045em 은 포스터 문법이라
+   글자가 서로 밀착해 "덩어리"로 읽혔다 — 크기는 그대로 두고 굵기를 낮추고 자간을
+   풀면 같은 문장이 편집 지면처럼 선다. 여백이 곧 세련됨이다. */
+.land .hero-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: clamp(20px, 3.4vw, 48px);
+  font-size: clamp(2.1rem, 2.5vw + 1rem, 3.6rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.012em;
+  color: var(--ink);
+}
+
+.hero-dest {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32em;
+}
+
+/* 네이버 그린 타일은 글자 크기를 따라 큰다 — 픽셀로 고정하면 4rem 옆에서 부스러기가 된다.
+   글자보다 살짝 작게: 목적지 마크는 상표이지 글자가 아니라, 같은 높이로 세우면 튄다. */
+.hero-line .dest-mark {
+  font-size: 0.36em;
+  width: 1.66em;
+  height: 1.66em;
+  border-radius: 0.46em;
+  font-weight: 700;
+}
+
+.hero-arrow {
+  display: inline-flex;
+  align-items: center;
+  color: var(--blue);
+}
+
+/* 화살표도 같이 가늘어진다 — 글자만 가늘어지면 선이 혼자 굵어 보인다. */
+.hero-arrow svg {
+  width: clamp(52px, 6.4vw, 96px);
+  height: auto;
+  overflow: visible;
+}
+
+/* 화살표는 그어진다 — 두 단어가 뜨는 사이에 선이 지나가야 "이동"이 된다. */
+@keyframes hero-draw {
+  from {
+    stroke-dashoffset: 52;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes hero-tip {
+  from {
+    opacity: 0;
+    transform: translateX(-7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hero-arrow-line {
+  stroke-dasharray: 52;
+  animation: hero-draw 520ms var(--ease-out) 170ms both;
+}
+
+.hero-arrow-head {
+  animation: hero-tip 240ms var(--ease-out) 610ms both;
+}
+
+/* 히어로 한 줄은 "무엇에서 무엇으로"만 말한다 — 그게 무슨 서비스인지는 이 줄이 맡는다. */
 .hero-sub {
-  font-size: clamp(13.5px, 0.7vw + 0.55rem, 15.5px);
+  margin-top: clamp(3px, 0.7vh, 10px);
+  font-size: clamp(15px, 0.8vw + 0.68rem, 18.5px);
   color: var(--muted);
   font-weight: 500;
+  letter-spacing: -0.01em;
   max-width: min(92vw, 820px);
   text-wrap: balance;
 }
@@ -812,135 +914,233 @@ textarea {
   min-height: 0;
 }
 
-/* 폰 링크 진입 — 잉크 채움. 블루(발사)와 위계가 겹치지 않게 한다. */
-.link-cta {
+/* 폰을 부르는 줄 — 눈(자동)은 왼쪽, QR(수동)은 오른쪽 끝. 둘 다 아이콘 하나 크기다. */
+.deck-tools {
   display: flex;
   align-items: center;
   gap: 12px;
-  text-align: left;
-  border-radius: 18px;
-  padding: 13px 16px;
-  background: var(--ink);
-  color: #fff;
-  box-shadow: 0 18px 34px -18px rgba(16, 19, 25, 0.6);
+  min-height: 52px;
+}
+
+/* QR 은 만일을 위한 문이다. 아이콘만 두고, 눌러야 할 이유가 있을 때만 눈에 띈다. */
+.qr-btn {
+  margin-left: auto;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--faint);
   transition:
+    color 160ms ease,
+    border-color 160ms ease,
     background 160ms ease,
-    transform 120ms var(--ease-out),
-    box-shadow 200ms var(--ease-out);
+    transform 120ms var(--ease-out);
 }
 
-.link-cta:hover {
-  background: #242b37;
-  box-shadow: 0 22px 40px -18px rgba(16, 19, 25, 0.65);
+.qr-btn:hover {
+  color: var(--ink);
+  border-color: var(--ink);
 }
 
-.link-cta:active {
-  transform: scale(0.985);
+.qr-btn:active {
+  transform: scale(0.94);
 }
 
-.link-cta:disabled {
-  opacity: 0.6;
+.qr-btn:disabled {
+  opacity: 0.45;
   cursor: progress;
 }
 
-.link-cta-icon {
-  flex: 0 0 auto;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.09);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  display: grid;
-  place-items: center;
+/* 이미 폰이 붙어 있으면 초록 점 하나로 족하다 — "연결됨"이라고 쓸 자리가 아니다. */
+.qr-btn.is-linked {
+  position: relative;
+  color: var(--ink);
+  border-color: var(--line);
 }
 
-.link-cta-copy {
-  flex: 1;
-  display: grid;
-  gap: 1px;
-  min-width: 0;
+.qr-btn.is-linked::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--green);
+  box-shadow: 0 0 0 2.5px var(--paper);
 }
 
-.link-cta-copy b {
-  font-size: 15.5px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-
-.link-cta-copy small {
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.link-cta-arrow {
-  color: rgba(255, 255, 255, 0.55);
-  font-weight: 700;
-  transition: transform 200ms var(--ease-out);
-}
-
-.link-cta:hover .link-cta-arrow {
-  transform: translateX(3px);
-}
-
-/* 폰 아이 배지 — 카메라가 돌고 있다는 고지이자 "들어 보이면 열린다"는 초대.
-   CTA 아래 한 줄로만 산다. 버튼보다 커지면 주객이 바뀐다. */
-.eye-badge {
+/* 폰 아이 초대장 — 작은 거울 + 한 줄. 아이콘만으로는 "노트북에 폰을 들어 보인다"는
+   생각 자체가 안 떠오른다. 자기 얼굴이 보이는 화면이 그걸 대신 가르친다. */
+.eye {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 9px;
-  padding: 0 2px;
-  font-size: 12.5px;
-  color: var(--faint);
-  line-height: 1.4;
-}
-
-.eye-badge.is-mute {
-  margin: 9px 0 0;
-  color: var(--faint);
-}
-
-.eye-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--line);
-  box-shadow: 0 0 0 0 var(--blue-soft);
-}
-
-.eye-badge.is-seeing .eye-dot {
-  background: var(--blue);
-  box-shadow: 0 0 0 4px var(--blue-soft);
-}
-
-.eye-copy {
-  flex: 1;
+  gap: 10px;
   min-width: 0;
 }
 
-.eye-badge.is-seeing .eye-copy {
-  color: var(--blue-deep);
-  font-weight: 600;
+.eye-view {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--line-soft);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
-/* 확신 게이지 — 채워지는 동안만 존재감이 있다. 사라질 땐 그냥 0 이 된다. */
-.eye-gauge {
-  flex: none;
-  width: 46px;
-  height: 3px;
+/* 거울상 — 좌우가 뒤집힌 화면에서는 자기 손을 못 따라간다. */
+.eye-cam {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  display: block;
+}
+
+/* 표적 — "여기에 이런 걸 놓으세요". 링과 색을 나눠 갖는다. */
+.eye-target {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 15px;
+  height: 24px;
+  margin: -12px 0 0 -7.5px;
+  border-radius: 4px;
+  border: 1.5px dashed rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(16, 19, 25, 0.25);
+  transition:
+    border-color 200ms ease,
+    transform 260ms var(--ease-out);
+}
+
+/* 촬영 중 램프 — 화면이 이미 고지지만, 세상 공통의 신호를 하나 더 얹는다. */
+.eye-view::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  background: var(--line-soft);
+  background: var(--red);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+  animation: dot-breathe 2.4s var(--ease-in-out) infinite;
+}
+
+.eye.is-opening .eye-view::after {
+  background: var(--line);
+}
+
+/* 확신 게이지 — 테두리가 12시부터 채워진다. 다 차는 순간 QR 이 스스로 열린다. */
+.eye-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  background: conic-gradient(from -90deg, var(--blue) calc(var(--charge, 0) * 1turn), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+}
+
+/* 이 한 줄이 첫 동작을 시킨다 — 회색 보조문구로 두면 아무도 안 읽는다.
+   그래서 파랑(누를 것·할 것의 색)이고, 아주 느리게 숨을 쉰다. */
+@keyframes eye-say-breathe {
+  0%,
+  100% {
+    opacity: 0.78;
+    transform: translate3d(0, 0.6px, 0);
+  }
+  50% {
+    opacity: 1;
+    transform: translate3d(0, -1.4px, 0);
+  }
+}
+
+.eye-say {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+  color: var(--blue);
+  transition: color 180ms ease;
+  /* 눈치만 챌 정도 — 3.4초에 한 번, 1.4px. 시선을 뺏지 않고 존재만 알린다. */
+  animation: eye-say-breathe 3.4s var(--ease-in-out) infinite;
+}
+
+/* 알아본 순간 — 표적이 잠기고 문구가 파랗게 바뀐다. */
+.eye.is-seeing .eye-target {
+  border-color: var(--blue);
+  border-style: solid;
+  transform: scale(1.12);
+}
+
+/* 알아본 뒤에는 숨을 멈춘다 — 이미 통했는데 계속 손짓하면 그건 오작동으로 읽힌다. */
+.eye.is-seeing .eye-say {
+  color: var(--blue-deep);
+  animation: none;
+  transform: none;
+  opacity: 1;
+}
+
+/* ── 마감 박자 — 정리된 메모가 칸에 "꽂힌다" ──
+   무대에서 산출물이 슬롯에 장착되는 문법을 메모칸에도 그대로 쓴다. 페이드가 아니라
+   내려앉고, 파란 테두리가 한 번 잡혔다가 풀린다. 그 사이에 사람이 읽는다. */
+@keyframes note-land {
+  0% {
+    transform: translate3d(0, -7px, 0);
+  }
+  62% {
+    transform: translate3d(0, 2px, 0);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+.note-block.is-landed textarea {
+  animation: note-land 420ms var(--ease-out) both;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-soft);
+  background: var(--paper);
+}
+
+.voice-chip.is-done {
+  color: var(--blue-deep);
+  border-color: rgba(49, 96, 240, 0.28);
+  background: rgba(49, 96, 240, 0.09);
+}
+
+/* 곧 저절로 눌린다 — 남은 시간을 버튼이 직접 채워 보여준다. */
+@keyframes cta-arm {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.deck-start.is-arming {
+  position: relative;
   overflow: hidden;
 }
 
-.eye-gauge i {
-  display: block;
-  height: 100%;
-  background: var(--blue);
+.deck-start.is-arming::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.85);
   transform-origin: left center;
-  transition: transform 90ms linear;
+  animation: cta-arm 1900ms linear both;
 }
 
 /* 메모 — 접지 않는다. 사진과 함께 이 화면의 두 입력 중 하나다. 라벨 없이 플레이스홀더가 말한다. */
@@ -1089,69 +1289,8 @@ textarea {
   animation: rise-in 300ms var(--ease-out) both;
 }
 
-/* 하단 스트립 */
-.land-strip {
-  margin-top: clamp(14px, 2.2vh, 24px);
-  border-top: 1px solid rgba(25, 31, 40, 0.07);
-  padding: clamp(12px, 2vh, 18px) 0 clamp(14px, 2.4vh, 22px);
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
-
-.strip-title {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  color: var(--faint);
-}
-
-.rail {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  min-width: 0;
-}
-
-.rail::-webkit-scrollbar {
-  display: none;
-}
-
-.rail li {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border-radius: 999px;
-  border: 1px solid rgba(25, 31, 40, 0.08);
-  padding: 7px 14px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.72);
-  transition: border-color 160ms ease;
-}
-
-.rail li b {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--faint);
-}
-
-.land-foot {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--faint);
-  font-weight: 600;
-}
-
 .stream-link {
-  margin-left: auto;
+  margin-left: 6px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -2928,6 +3067,7 @@ textarea {
 }
 
 .frame-chrome {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
@@ -2961,9 +3101,124 @@ textarea {
   background: var(--paper-soft);
 }
 
+.frame-url b {
+  font-weight: 500;
+  max-width: min(64ch, 40vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .frame-url.is-live {
   color: var(--stage-green);
   border-color: rgba(23, 178, 106, 0.45);
+}
+
+/* ── 마지막 박자 — 흉내 내던 주소창이 진짜 주소가 되는 순간 ──
+   여기부터는 무대가 아니라 실제로 열릴 페이지다. 그래서 주소가 꽂히고(페이드가 아니라
+   내려앉는다), 로딩 바가 실제 브라우저처럼 한 번 지나가고, 그 다음에 탭이 열린다. */
+.frame-url.is-real {
+  color: var(--stage-text);
+  border-color: rgba(49, 96, 240, 0.55);
+  background: rgba(49, 96, 240, 0.12);
+}
+
+.frame-url.is-real b {
+  animation: url-land 380ms var(--ease-out) both;
+}
+
+@keyframes url-land {
+  0% {
+    opacity: 0;
+    transform: translateY(-7px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.frame-load {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--blue);
+  transform-origin: left center;
+  animation: frame-load 940ms var(--ease-out) both;
+}
+
+@keyframes frame-load {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* 등록이 끝난 틀은 초록 테두리를 갖는다. 마지막 박자에서만 파랑으로 넘어간다 —
+   초록은 "됐다"이고 파랑은 "간다"이다. */
+.frame.is-launched {
+  border-color: rgba(49, 96, 240, 0.55);
+}
+
+.frame-chip.is-open {
+  color: var(--blue);
+  animation: chip-pop 320ms var(--ease-out) both;
+}
+
+/* 팝업이 막혔을 때의 마지막 문 — 무대 한가운데 아래쪽에 크게 선다. */
+.frame-open {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(18px, 3vh, 34px);
+  transform: translateX(-50%);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 22px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  box-shadow: 0 18px 40px -14px rgba(49, 96, 240, 0.7);
+  animation: chip-pop 380ms var(--ease-out) both;
+}
+
+.frame-open em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.frame-open:hover {
+  background: var(--blue-deep);
+}
+
+a.frame-chip.is-open {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@keyframes chip-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.9);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(0) scale(1.06);
+  }
+  100% {
+    transform: none;
+  }
 }
 
 .frame-chip {
@@ -5145,21 +5400,17 @@ textarea {
     gap: 7px;
   }
 
-  .land h1 {
-    font-size: clamp(1.75rem, 1.9vw + 0.75rem, 2.7rem);
+  .land h1,
+  .land .hero-line {
+    font-size: clamp(1.95rem, 2.1vw + 0.85rem, 3.05rem);
   }
 
   .hero-sub {
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .tray {
     min-height: clamp(210px, 33vh, 360px);
-  }
-
-  .land-strip {
-    margin-top: 10px;
-    padding: 10px 0 12px;
   }
 }
 

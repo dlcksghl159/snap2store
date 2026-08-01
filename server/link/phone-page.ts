@@ -57,6 +57,7 @@ export function renderPhonePage(rawCode: string): string {
   @keyframes breathe { 0%, 100% { opacity: 0.45; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
   @keyframes flashfx { 0% { opacity: 0; } 18% { opacity: 0.94; } 100% { opacity: 0; } }
   @keyframes barjump { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── 게이트 ── */
   #gate {
@@ -125,8 +126,16 @@ export function renderPhonePage(rawCode: string): string {
   #connState { color: var(--dim); transition: color 200ms ease; }
   #connState.ok { color: var(--green); }
   #connState.warn { color: var(--amber); }
-  #endBtn { margin-left: auto; border-radius: 999px; padding: 8px 16px; font-size: 13px; font-weight: 800; color: #fff; background: rgba(10, 12, 16, 0.55); border: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); transition: transform 120ms var(--ease); }
-  #endBtn:active { transform: scale(0.95); }
+  /* 종료는 셔터 오른쪽에 앉는다 — 촬영을 끝내는 손가락은 이미 거기에 있다.
+     흰 원(셔터)과 헷갈리지 않게 속을 채우지 않고, 체크 하나로만 말한다. */
+  #endBtn {
+    justify-self: center; width: 58px; height: 58px; border-radius: 999px;
+    display: grid; place-items: center; color: #fff;
+    background: rgba(10, 12, 16, 0.5); border: 1px solid rgba(255, 255, 255, 0.36);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    transition: transform 120ms var(--ease), background 180ms ease, border-color 180ms ease;
+  }
+  #endBtn:active { transform: scale(0.92); background: rgba(60, 203, 139, 0.3); border-color: var(--green); }
 
   .caption {
     position: absolute; left: 14px; right: 14px; bottom: calc(var(--sab) + 148px); z-index: 4;
@@ -160,7 +169,8 @@ export function renderPhonePage(rawCode: string): string {
   #shutter:disabled i { background: rgba(255, 255, 255, 0.34); }
   #shutter:disabled::before { opacity: 0.4; }
 
-  .mic { display: inline-flex; align-items: center; gap: 8px; justify-self: end; border-radius: 999px; padding: 9px 13px; background: rgba(10, 12, 16, 0.55); border: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  /* 마이크는 상태이지 동작이 아니다 — 상단 바의 다른 표시등 옆으로 올린다. */
+  .mic { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 7px 12px; background: rgba(10, 12, 16, 0.55); border: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
   .mic .bars { display: inline-flex; align-items: flex-end; gap: 2.5px; height: 14px; }
   .mic .bars i { width: 3px; height: 100%; border-radius: 2px; background: var(--green); transform: scaleY(0.35); transform-origin: bottom; }
   .mic.on .bars i { animation: barjump 900ms ease-in-out infinite; }
@@ -183,6 +193,15 @@ export function renderPhonePage(rawCode: string): string {
   #done p { margin: 0; color: var(--dim); font-size: 14.5px; line-height: 1.6; animation: rise 480ms var(--ease) 110ms both; }
   #done p b { color: var(--text); }
   #againBtn { margin-top: 8px; border-radius: 14px; border: 1px solid var(--line); padding: 12px 22px; font-size: 14px; font-weight: 700; color: var(--dim); animation: rise 480ms var(--ease) 160ms both; }
+  /* 웹이 메모를 정리하는 동안 — 폰은 "끝났다"가 아니라 "넘어갔다"를 보여준다. */
+  #done.is-working .done-glyph { color: var(--dim); background: rgba(255, 255, 255, 0.05); border-color: var(--line); }
+  #done.is-working .done-glyph svg { display: none; }
+  #done.is-working .done-glyph::after { content: ""; width: 28px; height: 28px; border-radius: 999px; border: 2.5px solid rgba(255, 255, 255, 0.16); border-top-color: #fff; animation: spin 900ms linear infinite; }
+  #done.is-failed .done-glyph { color: var(--amber); background: rgba(247, 144, 9, 0.14); border-color: rgba(247, 144, 9, 0.4); }
+  /* 등록된 상품으로 가는 문 — 데스크톱의 자동 새 탭은 팝업 차단에 막힐 수 있지만,
+     이 순간 폰은 이미 손에 들려 있다. 여기서 여는 게 제일 확실하다. */
+  #openBtn { margin-top: 4px; display: inline-block; border-radius: 14px; padding: 14px 24px; font-size: 15px; font-weight: 800; color: #06121f; background: var(--green); text-decoration: none; animation: rise 480ms var(--ease) both; }
+  #openBtn:active { transform: scale(0.97); }
 </style>
 </head>
 <body>
@@ -216,7 +235,10 @@ export function renderPhonePage(rawCode: string): string {
   <header class="bar-top">
     <span class="pill pill-live"><i></i>LIVE</span>
     <span class="pill" id="connState">연결 중…</span>
-    <button id="endBtn" type="button">종료</button>
+    <div class="mic off" id="mic">
+      <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span id="micLabel">준비 중</span>
+    </div>
   </header>
   <div class="caption" id="caption"><span id="captionText"></span></div>
   <footer class="bar-bottom">
@@ -224,10 +246,9 @@ export function renderPhonePage(rawCode: string): string {
       <span><b id="shotCount">0</b><u>담긴 사진</u></span>
     </div>
     <button id="shutter" type="button" aria-label="촬영"><i></i></button>
-    <div class="mic off" id="mic">
-      <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span id="micLabel">준비 중</span>
-    </div>
+    <button id="endBtn" type="button" aria-label="촬영 마치고 등록">
+      <svg width="26" height="26" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5 6.2 11.7 13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
   </footer>
   <div id="flash"></div>
   <div id="toast" hidden></div>
@@ -238,8 +259,9 @@ export function renderPhonePage(rawCode: string): string {
     <span class="done-glyph" aria-hidden="true">
       <svg width="34" height="34" viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.2 11.7 13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </span>
-    <h1>촬영 완료</h1>
-    <p>사진 <b id="doneCount">0</b>장이 웹에 담겼어요.</p>
+    <h1 id="doneTitle">웹으로 넘겼어요</h1>
+    <p id="doneNote">이제 폰은 내려놓으셔도 돼요</p>
+    <a id="openBtn" href="#" target="_blank" rel="noreferrer" hidden>등록된 상품 보기 ↗</a>
     <button id="againBtn" type="button">다시 촬영</button>
   </div>
 </div>
@@ -255,7 +277,7 @@ export function renderPhonePage(rawCode: string): string {
   ["gate", "gateError", "startBtn", "codeText", "codeChip", "codeEntry", "codeInput", "codeGo",
    "gateHint", "live", "vf", "connState", "endBtn",
    "caption", "captionText", "shotCount", "shots", "shutter", "mic", "micLabel",
-   "flash", "toast", "done", "doneCount", "againBtn"].forEach(function (id) {
+   "flash", "toast", "done", "doneTitle", "doneNote", "openBtn", "againBtn"].forEach(function (id) {
     els[id] = document.getElementById(id);
   });
 
@@ -461,6 +483,13 @@ export function renderPhonePage(rawCode: string): string {
         break;
       case "end":
         finish(false);
+        break;
+      case "handoff":
+        showHandoff(msg.state, msg.url);
+        break;
+      case "resume":
+        // 웹이 "다시 폰을 들어 보였다"고 알려온다 — QR 재스캔 없이 카메라만 다시 연다.
+        if (state.parked) void relink();
         break;
       default:
         break;
@@ -908,10 +937,39 @@ export function renderPhonePage(rawCode: string): string {
     state.parked = true;
     if (byMe) sendMsg({ t: "end" });
     stopCapture();
-    els.doneCount.textContent = String(state.shots);
+    els.done.classList.remove("is-working", "is-failed");
+    els.openBtn.hidden = true;
+    els.doneTitle.textContent = "웹으로 넘겼어요";
+    els.doneNote.textContent = "사진 " + state.shots + "장 · 이제 폰은 내려놓으셔도 돼요";
     els.live.hidden = true;
     els.gate.hidden = true;
     els.done.hidden = false;
+  }
+
+  /* ── 넘긴 뒤의 진행 ──
+     종료를 누르면 웹은 말과 사진을 함께 읽고 그대로 등록까지 간다. 폰에서 보면
+     아무 일도 일어나지 않은 것처럼 보이므로, 그 진행을 여기로 되받아 보여준다. */
+  function showHandoff(phase, url) {
+    if (!phase || els.done.hidden) return;
+    els.done.classList.toggle("is-working", phase === "reading" || phase === "registering");
+    els.done.classList.toggle("is-failed", phase === "failed");
+    if (phase === "reading") {
+      els.doneTitle.textContent = "말과 사진을 함께 읽는 중";
+      els.doneNote.textContent = "사진 " + state.shots + "장으로 등록 메모를 씁니다";
+    } else if (phase === "registering") {
+      els.doneTitle.textContent = "등록하는 중";
+      els.doneNote.textContent = "에이전트가 상품을 만들고 있어요";
+    } else if (phase === "done") {
+      els.doneTitle.textContent = "등록이 끝났어요";
+      els.doneNote.textContent = "스마트스토어에 올라갔습니다";
+      if (url) {
+        els.openBtn.href = url;
+        els.openBtn.hidden = false;
+      }
+    } else if (phase === "failed") {
+      els.doneTitle.textContent = "등록을 시작하지 못했어요";
+      els.doneNote.textContent = "웹 화면에서 확인해 주세요";
+    }
   }
 
   function stopCapture() {

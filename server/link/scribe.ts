@@ -25,6 +25,63 @@ const SCRIBE_SYSTEM = `너는 중고 물건 판매자의 말을 스마트스토�
 - 문체: 간결한 한국어 구를 " · " 로 잇는다. 300자 이내를 지향한다. 마크다운 금지.
 - 판별할 정보가 아직 없으면 빈 문자열을 반환한다.`;
 
+/**
+ * 마감 정리 — 촬영을 마치는 순간 딱 한 번, 말과 **찍은 사진**을 함께 읽는다.
+ *
+ * 서기는 세션 내내 소리만 듣는다. 그래서 "이거 텀블러인데" 한 마디가 잘못 들리면
+ * 그대로 메모가 되고, 그 메모는 등록 전체를 오염시킨다. 마감에서는 사진이 옆에 있다 —
+ * 말이 물건과 맞는지 대조할 수 있고, 사진에만 있는 사실(색·구성품·흠집)을 붙일 수 있다.
+ *
+ * 위계는 하나다: **사진이 사실, 말은 의도.** 어긋나면 사진을 믿고, 말에 쓸 게 없으면
+ * 빈 메모를 돌려준다 — 사진은 어차피 에이전트가 직접 다시 본다. 틀린 메모보다 빈 메모가 낫다.
+ */
+const FINALIZE_SYSTEM = `너는 물건을 파는 사람의 말과, 그 사람이 방금 찍은 사진을 함께 보고 스마트스토어 등록 메모를 완성하는 서기다.
+
+[사진과 말의 위계]
+- 사진은 사실이고, 말은 잘못 들렸을 수 있다. 둘이 어긋나면 사진을 믿는다.
+- 사진 속 물건과 말이 아예 다른 물건을 가리키면 그 말은 잘못 들어온 것으로 보고 버린다.
+- 가격·거래 방식·구매 시기·사용 기간은 사진으로 알 수 없다 — 말에서만 온다.
+
+[담을 것]
+물건 정체·브랜드·모델명, 사진에서 분명히 보이는 색상·재질·구성품·상태(흠집·사용감), 크기/용량, 구매 시기, 희망 가격, 거래 방식.
+
+[버릴 것]
+잡담·추임새·인사말·혼잣말·중복, 사진에도 말에도 없는 추측, 과장.
+
+[빈 메모를 돌려주는 경우]
+- 말에 쓸 정보가 하나도 없다 (잡담뿐이거나, 사진 속 물건과 전혀 맞지 않는다).
+- 이때 사진만 보고 메모를 지어내지 않는다. 빈 문자열을 돌려준다.
+
+[문체]
+간결한 한국어 구를 " · " 로 잇는다. 300자 이내. 마크다운 금지.`;
+
+export interface FinalizeNoteInput {
+  /** 음성으로 받아 적힌 지금까지의 메모. */
+  note: string;
+  /** 촬영한 사진의 data URL. 비어 있으면 대조할 것이 없다. */
+  imageUrls: string[];
+}
+
+export async function finalizeSellerNote(input: FinalizeNoteInput): Promise<string> {
+  const note = input.note.trim().slice(0, NOTE_LIMIT);
+  if (input.imageUrls.length === 0) return note;
+
+  const result = await requestOpenAiJson({
+    system: FINALIZE_SYSTEM,
+    user: `[말로 받아 적은 메모]\n${note || "(비어 있음)"}\n\n[방금 찍은 사진 ${input.imageUrls.length}장]\n사진 속 물건과 위 메모가 같은 물건인지 먼저 확인하고, 메모 전문을 다시 써라.`,
+    imageUrls: input.imageUrls,
+    schemaName: "final_seller_note",
+    jsonSchema: strictObject({
+      note: {
+        type: "string",
+        description: "사진과 말을 함께 읽고 완성한 메모 전문. 쓸 정보가 없으면 빈 문자열.",
+      },
+    }),
+    validator: ScribeResult,
+  });
+  return result.note.trim().slice(0, NOTE_LIMIT);
+}
+
 export interface NoteScribeOptions {
   /** 갱신된 메모 전문. utterance 는 이번 갱신을 만든 발화(디버그·표시용). */
   onNote: (note: string, utterance: string) => void;

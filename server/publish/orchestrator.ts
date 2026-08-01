@@ -888,6 +888,14 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
   if (registration.status !== "registered") {
     blockReasons.push(registration.message);
   }
+  /*
+    등록을 성사시키려고 원안에서 벗어난 것(주로 판매권한 없는 카테고리 대체)은
+    반드시 경고로 남긴다. 화면에는 "등록 완료"가 뜨는데 실제로 올라간 매대가 다르면,
+    조용히 넘어가는 순간 무대가 거짓말을 한 것이 된다.
+  */
+  for (const concession of registration.concessions ?? []) {
+    warnings.push(concession);
+  }
 
   await onEvent("단계 소요시간(ms)", {
     category: timings.category,

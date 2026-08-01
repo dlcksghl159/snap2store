@@ -28,6 +28,10 @@ header b i{font-style:normal;color:#ffb454;margin-left:10px;font-size:10.5px;let
 #legend span:hover{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.24);}
 #legend span.mute{opacity:.3;}
 #legend span u{text-decoration:none;color:#727c88;font-size:9.5px;min-width:1ch;text-align:right;}
+/* 수동 초기화 — 채널 칩과 같은 크기·모양이되 색을 갖지 않는다. 필터가 아니라 동작이라서. */
+#clear{font-size:9.5px;letter-spacing:.08em;border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:3px 10px;background:none;color:#8d95a5;cursor:pointer;font-family:inherit;transition:background .16s ease,border-color .16s ease,color .16s ease;}
+#clear:hover{background:rgba(255,92,77,.12);border-color:rgba(255,92,77,.5);color:#ff8878;}
+#clear:active{transform:scale(.96);}
 #feed{padding:12px 18px 56px;}
 .ev{display:flex;gap:10px;padding:3.5px 0;border-bottom:1px solid rgba(255,255,255,.045);align-items:baseline;position:relative;}
 .ev.in{animation:slide .34s var(--e) both;}
@@ -55,6 +59,7 @@ header b i{font-style:normal;color:#ffb454;margin-left:10px;font-size:10.5px;let
 <header><b>SNAP2STORE<i>RAW API STREAM</i></b><span id="stat"><span id="dot"></span><span id="statText">connecting…</span></span>
 <div id="legend">
 <span class="tool_call" data-ch="tool_call">tool_call<u>0</u></span><span class="tool_result" data-ch="tool_result">tool_result<u>0</u></span><span class="openai_raw" data-ch="openai_raw">openai_raw<u>0</u></span><span class="image" data-ch="image">image<u>0</u></span><span class="milestone" data-ch="milestone">milestone<u>0</u></span><span class="status" data-ch="status">status<u>0</u></span><span class="error" data-ch="error">error<u>0</u></span>
+<button id="clear" type="button" title="화면만 비웁니다 — 서버 로그는 그대로입니다">CLEAR</button>
 </div>
 </header>
 <div id="feed"></div>
@@ -81,6 +86,21 @@ window.addEventListener("scroll",function(){
   if(stick){pending=0;jump.classList.remove("show");}
 },{passive:true});
 jump.addEventListener("click",function(){stick=true;pending=0;jump.classList.remove("show");window.scrollTo(0,document.body.scrollHeight);});
+
+/*
+  수동 초기화 — 시연을 두 번 돌리면 이전 런의 줄이 위에 쌓여 있어 심사석이 어느 것이
+  이번 런인지 알 수 없다. 화면만 비운다: 서버 링버퍼는 그대로라 새로고침하면 되돌아온다.
+  ⚠ seen 은 비우지 않는다. 서버가 재연결 때 백로그를 재전송하므로, 여기서 지우면
+  방금 치운 줄이 그대로 다시 쌓인다 — 초기화가 초기화로 안 보이게 된다.
+*/
+document.getElementById("clear").addEventListener("click",function(){
+  feed.textContent="";
+  n=0;pending=0;stick=true;
+  counts=Object.create(null);
+  Array.prototype.forEach.call(document.querySelectorAll("#legend span u"),function(u){u.textContent="0";});
+  jump.classList.remove("show");
+  statText.textContent=dot.className==="on"?"live · 0 events":statText.textContent;
+});
 
 function bump(ch){
   counts[ch]=(counts[ch]||0)+1;

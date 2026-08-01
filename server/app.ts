@@ -7,6 +7,7 @@ import { writeFile } from "node:fs/promises";
 import { env, hasLiveSmartstoreCredentials } from "./env.js";
 import { linkHub } from "./link/hub.js";
 import { renderPhonePage } from "./link/phone-page.js";
+import { finalizeSellerNote } from "./link/scribe.js";
 import { lanAddresses } from "./link/tls.js";
 import { TunnelUnavailableError, activeTunnelUrl, ensureTunnel } from "./link/tunnel.js";
 import { subscribeLiveEvents } from "./live-events.js";
@@ -27,6 +28,9 @@ const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
 const MAX_NOTE_LENGTH = 2000;
 const MIN_SHORT_EDGE_PX = 240;
 const MAX_LONG_EDGE_PX = 2400;
+/** 메모 대조에 붙이는 사진 수 — 같은 물건을 열 각도에서 봐도 판단은 달라지지 않는다. */
+const NOTE_VISION_PHOTOS = 6;
+const NOTE_VISION_EDGE_PX = 768;
 
 const ACCEPTED_MIME = /^image\/(jpe?g|png|webp|heic|heif|avif)$/i;
 
@@ -113,6 +117,21 @@ async function normalizePhotos(
   return { paths, urls };
 }
 
+/** 모델에 바로 물릴 수 있게 줄여 인라인한다 — 디스크에 남길 이유가 없는 임시 판단용 사본이다. */
+async function inlineDataUrl(file: Express.Multer.File): Promise<string> {
+  const buffer = await sharp(file.buffer, { failOn: "none" })
+    .rotate()
+    .resize({
+      width: NOTE_VISION_EDGE_PX,
+      height: NOTE_VISION_EDGE_PX,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality: 72 })
+    .toBuffer();
+  return `data:image/jpeg;base64,${buffer.toString("base64")}`;
+}
+
 function publicConfig(): RuntimeConfig {
   return {
     agentMode: env.useOpenAI ? "openai" : "demo",
@@ -157,27 +176,29 @@ export function createApp(): Express {
     }
   });
 
+  const acceptPhotos = (req: Request, res: Response, next: NextFunction) => {
+    upload.array("photos", MAX_PHOTOS)(req, res, (error: unknown) => {
+      if (error) {
+        const message =
+          error instanceof multer.MulterError
+            ? error.code === "LIMIT_FILE_SIZE"
+              ? `사진 한 장은 ${MAX_PHOTO_BYTES / 1024 / 1024}MB 이하여야 합니다.`
+              : error.code === "LIMIT_FILE_COUNT"
+                ? `사진은 최대 ${MAX_PHOTOS}장까지 올릴 수 있습니다.`
+                : error.message
+            : error instanceof Error
+              ? error.message
+              : "업로드에 실패했습니다.";
+        res.status(400).json({ error: message });
+        return;
+      }
+      next();
+    });
+  };
+
   app.post(
     "/api/listings",
-    (req: Request, res: Response, next: NextFunction) => {
-      upload.array("photos", MAX_PHOTOS)(req, res, (error: unknown) => {
-        if (error) {
-          const message =
-            error instanceof multer.MulterError
-              ? error.code === "LIMIT_FILE_SIZE"
-                ? `사진 한 장은 ${MAX_PHOTO_BYTES / 1024 / 1024}MB 이하여야 합니다.`
-                : error.code === "LIMIT_FILE_COUNT"
-                  ? `사진은 최대 ${MAX_PHOTOS}장까지 올릴 수 있습니다.`
-                  : error.message
-              : error instanceof Error
-                ? error.message
-                : "업로드에 실패했습니다.";
-          res.status(400).json({ error: message });
-          return;
-        }
-        next();
-      });
-    },
+    acceptPhotos,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const files = (req.files as Express.Multer.File[] | undefined) ?? [];
@@ -278,10 +299,35 @@ export function createApp(): Express {
     subscribeLiveEvents(res);
   });
 
+  /*
+    마감 메모 — 폰이 촬영을 마치는 순간 데스크톱이 한 번 부른다. 말로 받아 적은 메모를
+    찍은 사진과 대조해 완성하고, 그 결과가 그대로 등록 메모가 된다.
+
+    이 호출은 등록의 **전제 조건이 아니다**. 실패하면 말한 그대로 돌려주고 등록은 계속
+    간다 — 메모 정리 실패가 등록 자체를 막으면 그게 더 큰 사고다.
+  */
+  app.post("/api/link/note", acceptPhotos, (req: Request, res: Response) => {
+    const spoken =
+      typeof req.body?.note === "string" ? req.body.note.trim().slice(0, MAX_NOTE_LENGTH) : "";
+    const files = (req.files as Express.Multer.File[] | undefined) ?? [];
+
+    void (async () => {
+      try {
+        const imageUrls = await Promise.all(files.slice(0, NOTE_VISION_PHOTOS).map(inlineDataUrl));
+        res.json({ note: await finalizeSellerNote({ note: spoken, imageUrls }) });
+      } catch (error) {
+        console.warn("[note] 사진과 함께 정리 실패 — 말한 그대로 갑니다:", error);
+        res.json({ note: spoken });
+      }
+    })();
+  });
+
   // ── 폰 링크 ── 데스크톱이 세션을 만들고, 폰은 QR 로 /phone 에 들어와 WS 로 합류한다.
   const linkUrls = (code: string) => {
     const ips = lanAddresses();
-    const tunnel = activeTunnelUrl();
+    // 손으로 꽂은 공개 주소가 최우선이다 — 시연장에서 확실히 되는 길을 알고 있다면
+    // 자동 탐색(퀵 터널)이 그걸 이겨서는 안 된다.
+    const tunnel = env.LINK_PUBLIC_URL.replace(/\/+$/, "") || activeTunnelUrl();
     const lanUrls = ips.map((ip) => `https://${ip}:${env.LINK_HTTPS_PORT}/phone?s=${code}`);
     // 터널이 켜져 있으면 그쪽이 첫 번째다 — 어느 네트워크에서든 열리고 인증서 경고도 없다.
     const phoneUrls = tunnel ? [`${tunnel}/phone?s=${code}`, ...lanUrls] : lanUrls;

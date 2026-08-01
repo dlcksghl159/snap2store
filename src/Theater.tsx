@@ -218,6 +218,7 @@ export function MissionControl({
           scene={scene}
           live={live}
           terminal={terminal}
+          canOpenProduct={!rehearsal}
           onPlayingChange={onPlayingChange}
         />
       </div>

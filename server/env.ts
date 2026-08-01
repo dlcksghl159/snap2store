@@ -39,6 +39,22 @@ const EnvironmentSchema = z.object({
   LINK_HTTPS_PORT: z.coerce.number().int().min(1024).max(65535).default(8443),
   // auto = 부팅 때 cloudflared 퀵 터널을 미리 연다 (같은 와이파이 제약·인증서 경고 제거).
   LINK_TUNNEL: z.enum(["off", "auto"]).default("off"),
+  /**
+   * 밖에서 이 서버(API 포트)로 들어오는 공개 주소. 설정되면 QR 이 무조건 이쪽을 가리킨다.
+   *
+   * ⚠ 시연장 와이파이는 기기끼리의 통신을 막는 경우가 흔하다(AP 격리). 그러면 LAN 직결은
+   * 무슨 짓을 해도 안 되고, 계정 없는 cloudflared 퀵 터널은 레이트 리밋(1015)에 걸린다 —
+   * 둘 다 우리 통제 밖이다. 그래서 "어떤 터널이든 꽂을 수 있는 구멍"을 하나 둔다:
+   * ngrok · Cloudflare named tunnel · tailscale funnel 무엇이든 8788 로 내보내고 그 주소를 여기에.
+   * 예: LINK_PUBLIC_URL=https://snap2store.ngrok.app
+   */
+  LINK_PUBLIC_URL: z.string().trim().default(""),
+  /**
+   * 판매권한이 없는 카테고리(식품 등)에 막혔을 때 갈아탈 리프 카테고리 ID 목록(쉼표 구분).
+   * 계정이 실제로 등록할 수 있는 곳만 넣는다 — 권한 없는 ID 를 넣으면 벽을 벽으로 바꾼다.
+   * 비우면 코드 기본값을 쓰고, "off" 로 두면 갈아타지 않고 권한 신청 안내로 끝낸다.
+   */
+  PUBLISH_FALLBACK_CATEGORIES: z.string().trim().default(""),
   // 발화 → 메모 서기의 기본 경로: 최신 realtime 모델이 소리를 직접 이해해 메모를 쓴다(1홉).
   VOICE_REALTIME_MODEL: z.string().trim().default("gpt-realtime-2.1"),
   // 자막(입력 전사) 사이드카 + 폴백 경로의 전사 모델. 정확도 우선 기본값.
@@ -72,6 +88,8 @@ const parsed = EnvironmentSchema.parse({
   AGENT_API_PORT: process.env.AGENT_API_PORT,
   LINK_HTTPS_PORT: process.env.LINK_HTTPS_PORT,
   LINK_TUNNEL: process.env.LINK_TUNNEL,
+  LINK_PUBLIC_URL: process.env.LINK_PUBLIC_URL,
+  PUBLISH_FALLBACK_CATEGORIES: process.env.PUBLISH_FALLBACK_CATEGORIES,
   VOICE_REALTIME_MODEL: process.env.VOICE_REALTIME_MODEL,
   VOICE_TRANSCRIBE_MODEL: process.env.VOICE_TRANSCRIBE_MODEL,
   VOICE_LANGUAGE: process.env.VOICE_LANGUAGE,

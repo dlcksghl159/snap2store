@@ -44,7 +44,16 @@ export interface PhoneLinkOptions {
   onPhotoFile: (file: File) => void;
   /** 서기가 갱신한 메모 전문. 이어붙이기가 아니라 교체다. */
   onNote: (text: string) => void;
+  /**
+   * 촬영이 **의도적으로** 끝났다 (폰의 종료 버튼 · 데스크톱의 촬영 마치기).
+   * 연결 사고로 라이브가 끊긴 경우에는 울리지 않는다 — 사고를 지시로 읽으면 안 된다.
+   * 세션당 한 번만 울린다.
+   */
+  onFinish?: () => void;
 }
+
+/** 넘겨받은 뒤 데스크톱이 폰 화면으로 되돌려 주는 진행 상태. */
+export type HandoffState = "reading" | "registering" | "failed" | "done";
 
 /** 스튜디오 캔버스에 그릴 수 있는 프레임 — JPEG 경로는 ImageBitmap, 비디오 경로는 VideoFrame. */
 export type LiveFrame = ImageBitmap | VideoFrame;
@@ -56,6 +65,8 @@ export interface PhoneLinkApi {
   phoneConnected: boolean;
   voice: VoiceState;
   captures: CaptureShot[];
+  /** 아직 트레이에 안 들어온 셔터 수 — 마감 처리가 이게 0 이 되기를 기다린다. */
+  pendingShots: number;
   fps: number;
   error: string | null;
   start: () => void;
@@ -64,7 +75,18 @@ export interface PhoneLinkApi {
   reset: () => void;
   /** 소등 뒤 페어링을 유지한 채 대기한다 — 폰의 "다시 촬영"이 여기서 복귀한다. */
   park: () => void;
+  /**
+   * 파킹된 폰에게 촬영 재개를 요청한다 — QR 재스캔 없이 같은 세션으로 돌아온다.
+   * 두 번째 상품을 올릴 때 다시 폰을 들어 보이면 이게 불린다.
+   */
+  resume: () => void;
   sendTray: (count: number, max: number) => void;
+  /**
+   * 마감·등록 진행을 폰 화면으로 되돌려 준다 — 폰에서 보면 아무 일도 없어 보이므로.
+   * 등록이 끝나면 상품 주소까지 함께 보낸다: 데스크톱의 자동 새 탭은 팝업 차단에
+   * 막힐 수 있지만, 그 순간 폰은 이미 사람 손에 들려 있다.
+   */
+  sendHandoff: (state: HandoffState, url?: string) => void;
   /** 세션 시작 시 메모 칸의 현재 내용을 서기에게 넘긴다 — 거기서 이어 쓴다. */
   sendNoteSeed: (text: string) => void;
   /** 핫스팟 전환 등으로 맥 IP 가 바뀌었을 때 같은 코드로 QR·주소를 다시 뽑는다. */
@@ -99,6 +121,9 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
   const [phoneConnected, setPhoneConnected] = useState(false);
   const [voice, setVoice] = useState<VoiceState>(IDLE_VOICE);
   const [captures, setCaptures] = useState<CaptureShot[]>([]);
+  /* 셔터는 눌렸는데 아직 트레이에 안 들어온 사진 수. captures 와 따로 센다 —
+     captures 는 소등(park)에서 걷히지만, 배달 중인 사진은 그때도 계속 오는 중이다. */
+  const [pendingShots, setPendingShots] = useState(0);
   const [fps, setFps] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,6 +150,14 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
   const fallbackTimersRef = useRef(new Map<number, number>());
   const capturesRef = useRef<CaptureShot[]>([]);
   capturesRef.current = captures;
+
+  /** 마감은 세션당 한 번이다 — 종료 메시지는 서버가 양쪽에 되쏘므로 에코로도 들어온다. */
+  const finishedRef = useRef(false);
+  const fireFinish = useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    optionsRef.current.onFinish?.();
+  }, []);
 
   /* ── 정리 ── */
   const clearTimers = useCallback(() => {
@@ -182,13 +215,23 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
   }, [phase]);
 
   /* ── 사진 수명주기 ── */
+  /**
+   * 트레이에 들어간 셔터 id. 한 셔터는 한 장이다 — 폴백(프리즈 컷)이 먼저 들어간 뒤
+   * 원본이 늦게 도착해도, 소등이 대기 중인 컷을 밀어 넣은 뒤에도 두 장이 되지 않는다.
+   */
+  const deliveredRef = useRef(new Set<number>());
   const deliverFile = useCallback((id: number, blob: Blob) => {
+    if (deliveredRef.current.has(id)) return;
+    deliveredRef.current.add(id);
+    setPendingShots((count) => Math.max(0, count - 1));
     const file = new File([blob], `phone-shot-${id}.jpg`, { type: "image/jpeg" });
     optionsRef.current.onPhotoFile(file);
   }, []);
 
   const beginCapture = useCallback(
     (id: number) => {
+      // 셔터가 눌린 순간부터 이 셔터는 "아직 트레이에 없는 사진"이다 (deliverFile 이 갚는다).
+      setPendingShots((count) => count + 1);
       const frozen = lastLiveRef.current;
       let url: string | null = null;
       if (frozen) {
@@ -240,15 +283,20 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
       fallbackTimersRef.current.delete(id);
       frozenBlobsRef.current.delete(id);
       const blob = new Blob([payload.slice()], { type: "image/jpeg" });
-      // ready 로 이미 표시된 샷은 폴백(프리즈 프레임)이 트레이에 들어갔다는 뜻 —
-      // 원본을 또 넣으면 같은 사진이 두 장 생긴다. 셔터 JSON 이 유실돼 엔트리 자체가
-      // 없는 경우는 반드시 넣는다.
-      const alreadyDelivered = capturesRef.current.find((shot) => shot.id === id)?.ready === true;
-      if (!alreadyDelivered) deliverFile(id, blob);
+      // 중복은 deliverFile 이 id 로 막는다 — 폴백이 이미 들어갔든, 셔터 JSON 이 유실돼
+      // 엔트리 자체가 없든, 여기서는 그냥 넣으면 된다.
+      deliverFile(id, blob);
       const url = URL.createObjectURL(blob);
       setCaptures((current) => {
         const existing = current.find((shot) => shot.id === id);
-        if (!existing) return [...current, { id, url, ready: true }];
+        if (!existing) {
+          // 소등 뒤에 도착한 원본 — 파일은 트레이로 갔지만, 이미 걷힌 필름에 다시 붙이진 않는다.
+          if (phaseRef.current === "parked" || phaseRef.current === "idle") {
+            URL.revokeObjectURL(url);
+            return current;
+          }
+          return [...current, { id, url, ready: true }];
+        }
         if (existing.url) URL.revokeObjectURL(existing.url);
         return current.map((shot) => (shot.id === id ? { ...shot, url, ready: true } : shot));
       });
@@ -265,6 +313,7 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
       frozenBlobsRef.current.delete(id);
       if (blob) deliverFile(id, blob);
       // 프리즈 프레임조차 없으면 트레이에 못 넣지만, 슬롯을 pending 으로 영원히 돌리진 않는다.
+      else setPendingShots((count) => Math.max(0, count - 1));
       setCaptures((current) =>
         current.map((shot) => (shot.id === id ? { ...shot, ready: true } : shot)),
       );
@@ -449,12 +498,15 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
         }
         case "end": {
           if (phaseRef.current === "live" || phaseRef.current === "waiting") setPhase("ending");
+          // 라이브에서 끝났을 때만 마감이다 — 폰이 붙기도 전(waiting)의 종료는 취소일 뿐이다.
+          if (phaseRef.current === "live") fireFinish();
           break;
         }
         case "relink": {
           // 파킹돼 있던 폰이 촬영을 재개했다 — 모니터를 다시 점화한다.
           if (phaseRef.current === "parked") {
             needKeyRef.current = true;
+            finishedRef.current = false;
             setPhoneConnected(true);
             setPhase("live");
           }
@@ -464,7 +516,7 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
           break;
       }
     },
-    [beginCapture, failPhoto, handleVideoConfig],
+    [beginCapture, failPhoto, fireFinish, handleVideoConfig],
   );
 
   const connect = useCallback(
@@ -576,6 +628,10 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
       setPhoneConnected(false);
       setVoice(IDLE_VOICE);
     }
+    // 새 세션은 폰의 셔터 번호도 1 부터 다시 센다 — 이전 세션의 기록을 들고 가면 안 넣는다.
+    deliveredRef.current.clear();
+    finishedRef.current = false;
+    setPendingShots(0);
     setError(null);
     setPhase("creating");
     void fetch("/api/link/sessions", { method: "POST" })
@@ -627,8 +683,23 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
     const response = await fetch(`/api/link/sessions/${code}/urls`);
     if (!response.ok) return;
     const info = (await response.json()) as LinkSessionInfo;
+    // 같은 주소면 QR 을 다시 굽지 않는다 — 주기 갱신이 화면을 계속 깜빡이게 두지 않는다.
+    if (info.phoneUrl === sessionRef.current?.phoneUrl) return;
     await applySessionInfo(info);
   }, [applySessionInfo]);
+
+  /*
+    대기 중에는 주소를 계속 확인한다. 와이파이를 바꾸거나 핫스팟으로 갈아타면 맥 IP 가
+    바뀌고 서버는 새 인증서로 다시 열리는데, 화면에 걸린 QR 은 옛 주소를 가리킨 채로
+    남는다 — 그 QR 을 찍으면 폰은 영영 안 붙는다. 여기서 스스로 갈아 끼운다.
+  */
+  useEffect(() => {
+    if (phase !== "waiting") return;
+    const timer = window.setInterval(() => {
+      void refreshUrls().catch(() => undefined);
+    }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [phase, refreshUrls]);
 
   const startTunnel = useCallback(async (): Promise<string | null> => {
     try {
@@ -656,8 +727,10 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
   const end = useCallback(() => {
     if (phaseRef.current !== "live" && phaseRef.current !== "waiting") return;
     sendJson({ t: "end" });
+    // 에코를 기다리지 않는다 — 소켓이 죽어 있으면 에코가 영영 안 오고, 그때도 마감은 마감이다.
+    if (phaseRef.current === "live") fireFinish();
     setPhase("ending");
-  }, [sendJson]);
+  }, [fireFinish, sendJson]);
 
   const cancel = useCallback(() => {
     sendJson({ t: "end" });
@@ -674,7 +747,12 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
    * 폰의 "다시 촬영"({t:"relink"})이 이 상태에서 라이브로 복귀시킨다.
    */
   const park = useCallback(() => {
-    clearTimers();
+    /*
+      ⚠ 소등은 사진을 기다리는 일을 끝내지 않는다. 폴백 타이머와 프리즈 컷을 그대로 살려
+      둔다 — 종료 직후에도 원본은 계속 날아오는 중이고, 여기서 타이머를 걷으면 마지막
+      한 장이 조용히 사라진다. 지금 프리즈 컷으로 확정해 버리는 것도 답이 아니다:
+      1초 뒤 도착할 원본 대신 저화질 라이브 프레임이 등록 사진이 된다.
+    */
     closeDecoder();
     for (const shot of capturesRef.current) if (shot.url) URL.revokeObjectURL(shot.url);
     setCaptures([]);
@@ -683,14 +761,17 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
     lastPaintedSeqRef.current = 0;
     fpsCountRef.current = 0;
     setPhase("parked");
-  }, [clearTimers, closeDecoder]);
+  }, [closeDecoder]);
 
   const reset = useCallback(() => {
     closeSocket();
     closeDecoder();
     clearTimers();
     for (const shot of capturesRef.current) if (shot.url) URL.revokeObjectURL(shot.url);
+    deliveredRef.current.clear();
+    finishedRef.current = false;
     setCaptures([]);
+    setPendingShots(0);
     setPhase("idle");
     setSession(null);
     setQrDataUrl(null);
@@ -715,6 +796,23 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
     [sendJson],
   );
 
+  const sendHandoff = useCallback(
+    (state: HandoffState, url?: string) => {
+      sendJson(url ? { t: "handoff", state, url } : { t: "handoff", state });
+    },
+    [sendJson],
+  );
+
+  /*
+    파킹 중 재개 요청. 폰은 이미 카메라 권한을 받아 둔 오리진이라 대부분 제스처 없이
+    다시 열린다. 못 열면 폰이 토스트를 띄우고 "다시 촬영" 버튼이 남는다 — 어느 쪽이든
+    데스크톱에서 QR 을 새로 뽑을 이유는 없다.
+  */
+  const resume = useCallback(() => {
+    if (phaseRef.current !== "parked") return;
+    sendJson({ t: "resume" });
+  }, [sendJson]);
+
   const setFrameSink = useCallback(
     (sink: ((frame: LiveFrame, seq: number) => void) | null) => {
       frameSinkRef.current = sink;
@@ -734,6 +832,7 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
     phoneConnected,
     voice,
     captures,
+    pendingShots,
     fps,
     error,
     start,
@@ -741,8 +840,10 @@ export function usePhoneLink(options: PhoneLinkOptions): PhoneLinkApi {
     cancel,
     reset,
     park,
+    resume,
     sendTray,
     sendNoteSeed,
+    sendHandoff,
     refreshUrls,
     startTunnel,
     setFrameSink,

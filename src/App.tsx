@@ -6,7 +6,14 @@ import {
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
-import { createListing, fetchListing, fetchListings, formatDate, formatPrice } from "./api";
+import {
+  createListing,
+  fetchListing,
+  fetchListings,
+  finalizeNote,
+  formatDate,
+  formatPrice,
+} from "./api";
 import { PhoneLinkModal, PhoneStudio } from "./PhoneLink";
 import { usePhoneLink } from "./link-client";
 import { EyeBadge } from "./PhoneEye";
@@ -19,16 +26,13 @@ const TERMINAL = new Set(["registered", "needs_review", "failed"]);
 const POLL_MS = 650;
 const LINGER_MS = 3200;
 const MAX_PHOTOS = 10;
+/** 마감 전 셔터 정착 대기 상한 — 원본 폴백(8초)보다 아주 조금 길게. */
+const PHOTO_SETTLE_MS = 9000;
+/** 정리된 메모가 꽂힌 뒤 등록이 시작되기까지 — 한 문장을 읽을 시간. */
+const NOTE_LAND_HOLD_MS = 1900;
 
-const PHASE_RAIL = [
-  "상품 파악",
-  "신원 검증",
-  "연출 이미지",
-  "카테고리 확정",
-  "등록 재료",
-  "규정 검증",
-  "스토어 등록",
-];
+/** 마감 처리의 화면 상태. null = 사람이 직접 쓰는 평시. */
+type HandoffPhase = null | "reading" | "landed";
 
 type View = "upload" | "listings";
 
@@ -54,8 +58,9 @@ export default function App() {
   /** 무대에 아직 재생할 조립 연출이 남았는가 — 결과 화면 전환이 이걸 기다린다. */
   const [revealPlaying, setRevealPlaying] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  /** 폰이 촬영을 마친 뒤의 마감 단계 — 메모칸이 이걸 보고 상태를 그린다. */
+  const [handoffPhase, setHandoffPhase] = useState<HandoffPhase>(null);
 
-  const openedRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const firstThumbRef = useRef<HTMLImageElement | null>(null);
   const previewsRef = useRef<string[]>([]);
@@ -99,12 +104,20 @@ export default function App() {
   addFilesRef.current = addFiles;
   const noteRef = useRef(note);
   noteRef.current = note;
+  /* 마감 처리는 훅보다 늦게 정의된다 — 콜백은 ref 를 거쳐 최신 함수를 부른다. */
+  const handoffRef = useRef<() => void>(() => undefined);
 
   const link = usePhoneLink({
     onPhotoFile: (file) => addFilesRef.current([file]),
     // 서기가 메모 전문을 다시 써서 보낸다 — 이어붙이지 않고 교체한다.
     onNote: (text) => setNote(text.slice(0, 2000)),
+    onFinish: () => handoffRef.current(),
   });
+
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const pendingShotsRef = useRef(0);
+  pendingShotsRef.current = link.pendingShots;
 
   /* 폰 셔터 비활성·카운트의 진실은 데스크톱 트레이다 — 변할 때마다 폰에 알린다. */
   useEffect(() => {
@@ -158,15 +171,27 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [activeStatus, revealPlaying]);
 
-  /* 실등록 완료 시 상품 페이지 자동 오픈 */
+  /*
+    상품 페이지 자동 오픈은 무대(AssemblyStage)가 맡는다 — 등록 완료 "즉시" 열면
+    브라우저 포커스가 새 탭으로 넘어가면서, 방금 무엇이 일어났는지 아무도 못 본다.
+    주소창이 실제 주소로 바뀌는 마지막 연출이 끝난 뒤에 열린다.
+
+    무대를 거치지 않고 끝난 런(닫아 버렸거나 보류)은 결과 화면의 "스마트스토어에서 보기"가
+    남아 있다 — 어느 경로에서도 링크를 잃지 않는다.
+  */
+
+  /*
+    등록이 끝나면 상품 주소를 폰으로도 보낸다.
+    ⚠ 데스크톱의 자동 새 탭은 사용자 제스처 없이 열리므로 브라우저가 막을 수 있다 —
+    이건 우리 버그가 아니라 팝업 차단의 정상 동작이고, 설정으로 허용하기 전엔 못 이긴다.
+    그래서 문을 하나 더 낸다: 그 순간 폰은 이미 사람 손에 들려 있다.
+  */
+  const productUrl = activeListing?.publication?.productUrl ?? null;
+  const registered = activeListing?.status === "registered";
   useEffect(() => {
-    if (!activeListing) return;
-    const url = activeListing.publication?.productUrl;
-    if (activeListing.status === "registered" && url && openedRef.current !== activeListing.id) {
-      openedRef.current = activeListing.id;
-      window.open(url, "_blank", "noopener");
-    }
-  }, [activeListing]);
+    if (!registered || !productUrl) return;
+    link.sendHandoff("done", productUrl);
+  }, [registered, productUrl, link.sendHandoff]);
 
   const controlVisible =
     activeListing != null &&
@@ -180,19 +205,28 @@ export default function App() {
     activeListing != null && activeListing.status === "registered" && lingerDone && !controlVisible;
 
   /**
-   * 폰 아이 — 랜딩이 맨 앞에 있고 아직 폰이 안 붙었을 때만 맥북 카메라가 지켜본다.
-   * 그 밖의 모든 순간(등록 진행·결과·드로어·목록·이미 연결됨)에는 눈을 감는다.
-   * 켤 이유가 없는데 켜져 있는 카메라는 그 자체로 버그다.
+   * 폰 아이 — 랜딩이 맨 앞에 있을 때만 맥북 카메라가 지켜본다. 등록 진행·결과·드로어·목록
+   * 에서는 눈을 감는다. 켤 이유가 없는데 켜져 있는 카메라는 그 자체로 버그다.
+   *
+   * ⚠ 파킹(폰이 이미 붙어 있음)에서도 눈은 뜬다. 예전엔 idle 일 때만 켜서, 첫 상품을
+   * 올린 뒤 "새 상품 올리기"로 돌아오면 카메라가 죽은 것처럼 보였다 — 두 번째 상품부터는
+   * 마법이 사라지는 셈이었다. 파킹 중에 폰을 들어 보이면 새 QR 이 아니라 **재개**를 보낸다:
+   * 이미 페어링된 폰이 카메라만 다시 열면 되므로 재스캔이 필요 없다.
    */
+  const startOrResume = useCallback(() => {
+    if (link.phase === "parked") link.resume();
+    else link.start();
+  }, [link.phase, link.resume, link.start]);
+
   const eye = usePhoneEye({
     enabled:
       eyeSupported() &&
       view === "upload" &&
-      link.phase === "idle" &&
+      (link.phase === "idle" || link.phase === "parked") &&
       !controlVisible &&
       !showResult &&
       detailListing == null,
-    onSpot: link.start,
+    onSpot: startOrResume,
   });
 
   /* 스테이지·폰 링크가 떠 있는 동안 스크롤 잠금 — parked 는 랜딩이 그대로 보이는 상태다 */
@@ -221,17 +255,22 @@ export default function App() {
     setLingerDone(false);
     setRevealPlaying(false);
     setDismissed(false);
-    openedRef.current = null;
     replaceFiles([]);
     setNote("");
   }, [replaceFiles]);
 
-  const start = useCallback(async () => {
-    if (submitting) return;
+  /**
+   * 등록 시작. noteOverride 는 마감 정리가 새로 써 온 메모다 — setNote 는 다음 렌더에나
+   * 반영되므로, 그 한 박자를 기다리지 않고 값을 직접 들고 간다.
+   * 성공 여부를 돌려준다 (폰에 되돌려 줄 진행 상태가 이걸 본다).
+   */
+  const start = useCallback(async (noteOverride?: string): Promise<boolean> => {
+    if (submitting) return false;
     if (files.length === 0) {
       inputRef.current?.click();
-      return;
+      return false;
     }
+    const memo = noteOverride ?? note;
     setSubmitting(true);
     setError(null);
     setLingerDone(false);
@@ -249,7 +288,7 @@ export default function App() {
     }
 
     try {
-      const { id } = await createListing(files, note);
+      const { id } = await createListing(files, memo);
       const record = await fetchListing(id).catch(() => null);
       setActiveListing(
         record ?? {
@@ -262,7 +301,7 @@ export default function App() {
           progress: 2,
           photoUrls: [],
           photoPaths: [],
-          sellerNote: note || null,
+          sellerNote: memo || null,
           draft: null,
           materials: null,
           publication: null,
@@ -272,18 +311,68 @@ export default function App() {
           events: [],
         },
       );
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "등록을 시작하지 못했습니다.");
       // 사진을 그냥 지우지 않는다 — 들어올렸던 클론이 제자리로 돌아가야 취소로 읽힌다.
       setFlightAborted(true);
+      return false;
     } finally {
       setSubmitting(false);
     }
   }, [files, note, previews, submitting]);
 
+  /**
+   * 마감 — 폰이 촬영을 마쳤다. 여기서 사람이 버튼을 한 번 더 누를 이유가 없다.
+   * 말과 사진을 함께 읽어 메모를 완성하고, 그대로 등록까지 간다.
+   *
+   * 메모 정리가 실패하거나 빈 메모가 와도 등록은 간다 — 말은 틀릴 수 있어도 사진은
+   * 이미 다 도착했고, 이 파이프라인의 본체는 사진이다.
+   */
+  const startRef = useRef(start);
+  startRef.current = start;
+  const sendHandoff = link.sendHandoff;
+
+  const runHandoff = useCallback(async () => {
+    // 마지막 셔터의 원본이 아직 날아오는 중일 수 있다 — 트레이가 잠잠해질 때까지 기다린다.
+    const deadline = Date.now() + PHOTO_SETTLE_MS;
+    while (pendingShotsRef.current > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+    }
+    if (filesRef.current.length === 0) return;
+
+    setHandoffPhase("reading");
+    sendHandoff("reading");
+    let memo = noteRef.current;
+    try {
+      memo = await finalizeNote(filesRef.current, noteRef.current);
+      setNote(memo);
+    } catch {
+      /* 말한 그대로 간다 */
+    }
+
+    /*
+      정리된 메모를 **보여주고** 실행한다. 말한 내용이 어떻게 정리됐는지 확인할 틈도 없이
+      등록이 시작되면, 판매자는 자기가 무엇으로 등록됐는지 끝까지 모른 채로 남는다.
+      산출물이 칸에 꽂히는 무대의 문법을 여기에도 그대로 쓴다 — 꽂히고, 읽히고, 그 다음 실행.
+    */
+    setHandoffPhase("landed");
+    await new Promise((resolve) => window.setTimeout(resolve, NOTE_LAND_HOLD_MS));
+
+    const ok = await startRef.current(memo);
+    setHandoffPhase(null);
+    sendHandoff(ok ? "registering" : "failed");
+  }, [sendHandoff]);
+
+  useEffect(() => {
+    handoffRef.current = () => void runHandoff();
+  }, [runHandoff]);
+
   return (
     <>
       <header className="hdr">
+        {/* 만든 자리(해커톤)와 만든 것(제품)이 나란히 선다 — 크기로 위계를 준다. */}
+        <span className="hdr-credit">YAI × OpenAI AGENT:24</span>
         <span className="wordmark">Snap2Store</span>
         <nav className="nav">
           <button
@@ -305,6 +394,11 @@ export default function App() {
           >
             올린 물건
           </button>
+          {/* 세컨드 화면 — 심사석에서 실제 API 스트림을 열어 보는 문이다. */}
+          <a className="stream-link" href="/stream" target="_blank" rel="noreferrer">
+            <i aria-hidden />
+            Raw API Stream ↗
+          </a>
         </nav>
       </header>
 
@@ -337,6 +431,7 @@ export default function App() {
             linkBusy={link.phase !== "idle" && link.phase !== "parked"}
             linkParked={link.phase === "parked"}
             voiceLive={link.phase === "live" && link.voice.status === "ready"}
+            handoffPhase={handoffPhase}
           />
         )
       ) : (
@@ -418,6 +513,8 @@ interface LandingViewProps {
   linkBusy: boolean;
   linkParked: boolean;
   voiceLive: boolean;
+  /** 폰 마감 단계 — 메모칸이 "읽는 중 → 정리됨"을 보여주고, 그 다음 등록이 뜬다. */
+  handoffPhase: HandoffPhase;
 }
 
 function LandingView({
@@ -437,6 +534,7 @@ function LandingView({
   linkBusy,
   linkParked,
   voiceLive,
+  handoffPhase,
 }: LandingViewProps) {
   const [over, setOver] = useState(false);
 
@@ -460,16 +558,42 @@ function LandingView({
         <i />
       </div>
 
+      {/*
+        히어로는 한 줄이다. 설명하는 건 화살표 하나뿐 — 읽는 문장이 아니라 보는 그림이
+        되어야 사진 한 장이 스토어가 된다는 주장이 0.5초에 전달된다.
+      */}
       <section className="hero">
-        <span className="dest-line rise">
-          <span className="dest-mark" aria-hidden>
-            N
+        <h1 className="hero-line" aria-label="Snap 한 장이 스마트스토어 등록까지">
+          <span className="rise">Snap</span>
+          <span className="hero-arrow" aria-hidden>
+            <svg viewBox="0 0 64 20" fill="none">
+              <path
+                className="hero-arrow-line"
+                d="M2 10h52"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+              />
+              <path
+                className="hero-arrow-head"
+                d="m47.6 4.3 6.6 5.7-6.6 5.7"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </span>
-          스마트스토어
-        </span>
-        <h1 className="rise" style={{ "--i": 1 } as React.CSSProperties}>
-          찍으면, <em>등록까지.</em>
+          <span className="hero-dest rise" style={{ "--i": 10 } as React.CSSProperties}>
+            <span className="dest-mark" aria-hidden>
+              N
+            </span>
+            Smartstore
+          </span>
         </h1>
+        <p className="hero-sub rise" style={{ "--i": 14 } as React.CSSProperties}>
+          사진만 올리면 상품명·가격·상세페이지까지 만들어 스마트스토어에 등록합니다
+        </p>
       </section>
 
       <input
@@ -565,32 +689,46 @@ function LandingView({
         </div>
 
         <aside className="deck-side">
-          <button
-            type="button"
-            className="link-cta"
-            onClick={onPhoneLink}
-            disabled={linkBusy}
-          >
-            <span className="link-cta-icon" aria-hidden>
-              <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
-                <rect x="7" y="2.8" width="10" height="18.4" rx="2.6" stroke="currentColor" strokeWidth="1.5" />
-                <circle cx="12" cy="17.6" r="1.15" fill="currentColor" />
-                <path d="M10.4 5.4h3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          {/*
+            폰을 부르는 두 가지 길. 기본은 눈(카메라가 알아서 본다)이고, QR 은 만일을
+            위한 문이라 아이콘 하나로 족하다 — 글자를 붙이는 순간 주된 길처럼 읽힌다.
+          */}
+          <div className="deck-tools">
+            <EyeBadge eye={eye} parked={linkParked} />
+            <button
+              type="button"
+              className={`qr-btn${linkParked ? " is-linked" : ""}`}
+              onClick={onPhoneLink}
+              disabled={linkBusy}
+              aria-label={linkParked ? "핸드폰 연결됨 — QR 다시 열기" : "QR 코드로 핸드폰 연결"}
+              title={linkParked ? "핸드폰 연결됨 — QR 다시 열기" : "QR 코드로 핸드폰 연결"}
+            >
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <rect x="3" y="3" width="7.2" height="7.2" rx="1.7" stroke="currentColor" strokeWidth="1.7" />
+                <rect x="13.8" y="3" width="7.2" height="7.2" rx="1.7" stroke="currentColor" strokeWidth="1.7" />
+                <rect x="3" y="13.8" width="7.2" height="7.2" rx="1.7" stroke="currentColor" strokeWidth="1.7" />
+                <path
+                  d="M13.8 13.8h3v3h-3zM18 18h3v3h-3zM13.8 20.4h1.6"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
-            </span>
-            <span className="link-cta-copy">
-              <b>{linkParked ? "핸드폰 연결됨" : "핸드폰으로 찍기"}</b>
-              {linkParked ? <small>다시 촬영은 폰에서</small> : null}
-            </span>
-            <span className="link-cta-arrow" aria-hidden>
-              →
-            </span>
-          </button>
+            </button>
+          </div>
 
-          {linkParked ? null : <EyeBadge eye={eye} />}
-
-          <label className="note-block">
-            {voiceLive ? (
+          <label className={`note-block${handoffPhase === "landed" ? " is-landed" : ""}`}>
+            {handoffPhase === "reading" ? (
+              <span className="voice-chip voice-float">
+                <span className="spinner" aria-hidden />
+                말과 사진을 함께 읽는 중
+              </span>
+            ) : handoffPhase === "landed" ? (
+              <span className="voice-chip voice-float is-done">
+                <CheckCircleIcon size={13} weight="fill" aria-hidden="true" />말 + 사진으로 정리했어요
+              </span>
+            ) : voiceLive ? (
               <span className="voice-chip voice-float">
                 <span className="voice-bars" aria-hidden>
                   <i />
@@ -610,37 +748,22 @@ function LandingView({
 
           {error ? <div className="inline-error">{error}</div> : null}
 
+          {/* 마감 중에는 이 버튼이 카운트다운이 된다 — 곧 저절로 눌린다는 걸 보여주고,
+              먼저 누르면 기다리지 않고 바로 간다. */}
           <button
             type="button"
-            className="btn btn-xl btn-primary deck-start"
+            className={`btn btn-xl btn-primary deck-start${handoffPhase === "landed" ? " is-arming" : ""}`}
             onClick={onStart}
             disabled={submitting}
           >
             {submitting ? <span className="spinner" aria-hidden /> : null}
-            등록 시작
+            {handoffPhase === "landed" ? "이 내용으로 등록" : "등록 시작"}
             {files.length > 0 ? <span className="cta-count tnum">{files.length}</span> : null}
             <span className="arrow">→</span>
           </button>
         </aside>
       </section>
 
-      <footer className="land-strip">
-        <ol className="rail">
-          {PHASE_RAIL.map((label, index) => (
-            <li key={label}>
-              <b>{index + 1}</b>
-              {label}
-            </li>
-          ))}
-        </ol>
-        <div className="land-foot">
-          <span>YAI × OpenAI AGENT:24</span>
-          <a className="stream-link" href="/stream" target="_blank" rel="noreferrer">
-            <i aria-hidden />
-            Raw API Stream ↗
-          </a>
-        </div>
-      </footer>
     </main>
   );
 }

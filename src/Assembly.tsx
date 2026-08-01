@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { CheckIcon, ImageSquareIcon, ImagesIcon, SpinnerGapIcon } from "@phosphor-icons/react";
+import {
+  ArrowUpRightIcon,
+  CheckIcon,
+  ImageSquareIcon,
+  ImagesIcon,
+  SpinnerGapIcon,
+} from "@phosphor-icons/react";
 import type { ListingRecord } from "./domain/types";
 import { KC_LABEL, ROLE_LABEL } from "./stage-model";
 import type { ControlDerived, SceneKey, TerminalStatus } from "./stage-model";
@@ -1002,6 +1008,72 @@ function Slot({
   );
 }
 
+/* --- 마지막 박자: 실제 등록 → 새 탭 -------------------------------------------- */
+
+/** idle → address(주소창이 진짜 상품 주소로) → opening(새 탭이 열린다) → done */
+export type LaunchStep = "idle" | "address" | "opening" | "done";
+
+const LAUNCH_ADDRESS_MS = 940;
+const LAUNCH_OPEN_MS = 640;
+
+/** 주소창에 걸 문자열 — 스킴은 지우고 실제로 열릴 주소만 보여준다. */
+function displayUrl(url: string | null): string {
+  if (!url) return "smartstore.naver.com";
+  return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+/**
+ * 등록이 진짜로 끝난 순간의 연출 — 주소창이 실제 상품 주소로 바뀌고, 로딩 바가 지나가고,
+ * 그 페이지가 새 탭으로 열린다.
+ *
+ * ⚠ 탭은 **연출이 끝난 뒤에** 연다. 등록 완료 즉시 열면 브라우저 포커스가 새 탭으로
+ * 넘어가면서 관객은 방금 무엇이 일어났는지 못 본 채 상품 페이지를 마주한다.
+ * ⚠ 팝업 차단기는 제스처 없는 open 을 막는다 — 막히면 눌러서 열 수 있는 링크를 남긴다.
+ */
+function useProductLaunch({
+  armed,
+  productUrl,
+  canOpen,
+  reduced,
+}: {
+  /** 도장이 찍힐 조건이 갖춰졌는가 — 틀이 다 채워지고, 실제로 스토어에 올라갔는가. */
+  armed: boolean;
+  productUrl: string | null;
+  /** 리허설 재생은 탭을 열지 않는다 — 녹화를 보는 중에 진짜 상품 페이지가 뜨면 거짓말이 된다. */
+  canOpen: boolean;
+  reduced: boolean;
+}): { step: LaunchStep; blocked: boolean; opens: boolean } {
+  const [step, setStep] = useState<LaunchStep>("idle");
+  const [blocked, setBlocked] = useState(false);
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    if (!armed || !productUrl || firedRef.current) return;
+    firedRef.current = true;
+
+    const open = () => {
+      setStep("done");
+      if (!canOpen) return;
+      if (!window.open(productUrl, "_blank", "noopener")) setBlocked(true);
+    };
+
+    if (reduced) {
+      open();
+      return;
+    }
+
+    setStep("address");
+    const toOpening = window.setTimeout(() => setStep("opening"), LAUNCH_ADDRESS_MS);
+    const toDone = window.setTimeout(open, LAUNCH_ADDRESS_MS + LAUNCH_OPEN_MS);
+    return () => {
+      window.clearTimeout(toOpening);
+      window.clearTimeout(toDone);
+    };
+  }, [armed, canOpen, productUrl, reduced]);
+
+  return { step, blocked, opens: canOpen };
+}
+
 function ListingFrame({
   derived,
   listing,
@@ -1014,6 +1086,7 @@ function ListingFrame({
   live,
   terminal,
   assembling,
+  launch,
 }: {
   derived: ControlDerived;
   listing: ListingRecord;
@@ -1030,6 +1103,8 @@ function ListingFrame({
   terminal: TerminalStatus;
   /** 남은 조립 연출이 있는가 — 도장은 틀이 다 채워진 뒤에 찍혀야 한다. */
   assembling: boolean;
+  /** 마지막 박자 — 주소창을 실제 상품 주소로 바꾸고 새 탭을 여는 연출의 진행. */
+  launch: { step: LaunchStep; blocked: boolean; opens: boolean };
 }) {
   const complete = terminal === "registered";
   const shots = derived.shots;
@@ -1074,11 +1149,15 @@ function ListingFrame({
         ? "스토어에 올리는 중"
         : "등록안 조립 중";
 
+  const productUrl = listing.publication?.productUrl ?? null;
+  const launched = launch.step !== "idle";
+  const opening = launch.opens && (launch.step === "opening" || launch.step === "done");
+
   return (
     <section
       className={`frame${complete ? " is-complete" : ""}${scene === "validation" ? " is-validating" : ""}${
         scene === "publishing" ? " is-publishing" : ""
-      }`}
+      }${launched ? " is-launched" : ""}`}
       aria-label="조립 중인 스마트스토어 등록안"
     >
       <header className="frame-chrome">
@@ -1087,18 +1166,43 @@ function ListingFrame({
           <i />
           <i />
         </span>
-        <span className={`frame-url${complete && live ? " is-live" : ""}`}>
-          smartstore.naver.com
+        {/* 마지막 박자에는 이 칸이 흉내가 아니라 실제로 열릴 주소가 된다. */}
+        <span
+          className={`frame-url${complete && live ? " is-live" : ""}${launched ? " is-real" : ""}`}
+        >
+          <b key={launched ? "real" : "mock"}>
+            {launched ? displayUrl(productUrl) : "smartstore.naver.com"}
+          </b>
           {complete && live ? <CheckIcon size={12} weight="bold" aria-hidden="true" /> : null}
         </span>
-        <span className={`frame-chip${complete ? " is-done" : ""}`}>
-          {complete ? (
-            <CheckIcon size={11} weight="bold" aria-hidden="true" />
-          ) : (
-            <SpinnerGapIcon size={11} weight="bold" className="spin" aria-hidden="true" />
-          )}
-          {chip}
-        </span>
+        {launched ? <span className="frame-load" aria-hidden="true" /> : null}
+        {/* 팝업이 막혔을 때만 누를 것이 된다 — 그 밖에는 지금 무슨 일이 벌어지는지 알리는 표시다.
+            리허설(탭을 열지 않는 재생)에서는 열린다고 쓰지 않는다. */}
+        {launch.blocked && productUrl ? (
+          <a className="frame-chip is-open" href={productUrl} target="_blank" rel="noreferrer">
+            <ArrowUpRightIcon size={11} weight="bold" aria-hidden="true" />새 탭에서 열기
+          </a>
+        ) : (
+          <span
+            className={`frame-chip${complete ? " is-done" : ""}${opening ? " is-open" : ""}`}
+          >
+            {opening ? (
+              <>
+                <ArrowUpRightIcon size={11} weight="bold" aria-hidden="true" />
+                {launch.step === "done" ? "새 탭에서 열림" : "새 탭에서 여는 중"}
+              </>
+            ) : (
+              <>
+                {complete ? (
+                  <CheckIcon size={11} weight="bold" aria-hidden="true" />
+                ) : (
+                  <SpinnerGapIcon size={11} weight="bold" className="spin" aria-hidden="true" />
+                )}
+                {chip}
+              </>
+            )}
+          </span>
+        )}
       </header>
 
       <div className="frame-body">
@@ -1351,6 +1455,18 @@ function ListingFrame({
           <em>SMARTSTORE</em>
         </div>
       ) : null}
+
+      {/*
+        새 탭이 팝업 차단에 막혔을 때의 문. 칩 하나로는 못 알아본다 — 마지막 박자가
+        "열렸다"에서 "열어 주세요"로 바뀐 것이므로, 그만한 크기로 말해야 한다.
+      */}
+      {launch.blocked && productUrl ? (
+        <a className="frame-open" href={productUrl} target="_blank" rel="noreferrer">
+          <ArrowUpRightIcon size={16} weight="bold" aria-hidden="true" />
+          스마트스토어에서 열기
+          <em>브라우저가 새 탭을 막았어요</em>
+        </a>
+      ) : null}
     </section>
   );
 }
@@ -1363,6 +1479,7 @@ export function AssemblyStage({
   scene,
   live,
   terminal,
+  canOpenProduct = true,
   onPlayingChange,
 }: {
   derived: ControlDerived;
@@ -1370,6 +1487,8 @@ export function AssemblyStage({
   scene: SceneKey;
   live: boolean;
   terminal: TerminalStatus;
+  /** 리허설 재생은 실제 상품 탭을 열지 않는다. */
+  canOpenProduct?: boolean;
   /** 남은 조립 연출이 있는지 부모에게 알린다 — 결과 화면 전환이 이걸 기다린다. */
   onPlayingChange?: (playing: boolean) => void;
 }) {
@@ -1403,9 +1522,22 @@ export function AssemblyStage({
     reduced,
   );
 
+  /*
+    마지막 박자는 틀이 **다 채워진 뒤**에 시작한다. 도장과 같은 조건이다 —
+    빈 칸이 남은 틀 위에서 주소창이 바뀌면 무대가 순서를 잃는다.
+  */
+  const launch = useProductLaunch({
+    armed: terminal === "registered" && live && !playing,
+    productUrl: listing.publication?.productUrl ?? null,
+    canOpen: canOpenProduct,
+    reduced,
+  });
+  const launching = launch.step === "address" || launch.step === "opening";
+
+  // 결과 화면은 이 박자까지 기다린다 — 탭이 열리기도 전에 무대가 걷히면 안 된다.
   useEffect(() => {
-    onPlayingChange?.(playing);
-  }, [playing, onPlayingChange]);
+    onPlayingChange?.(playing || launching);
+  }, [playing, launching, onPlayingChange]);
   // 무대가 사라지면 남은 연출도 없다 — 부모가 이 신호를 기다리다 갇히지 않게 한다.
   useEffect(() => () => onPlayingChange?.(false), [onPlayingChange]);
 
@@ -1434,6 +1566,7 @@ export function AssemblyStage({
         live={live}
         terminal={terminal}
         assembling={playing}
+        launch={launch}
       />
       {active && active.content.type === "inline" ? (
         <InlineBeat key={active.key} item={active} onDone={onDone} reduced={reduced} />

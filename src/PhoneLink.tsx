@@ -160,7 +160,7 @@ export function PhoneStudio({ link, trayCount, trayMax, onClosed }: PhoneStudioP
     return () => window.clearTimeout(timer);
   }, [ending, onClosed]);
 
-  /* Escape = 촬영 마치기 */
+  /* Escape = 마치고 등록 — 폰의 종료 버튼과 같은 동작이다 (두 갈래로 갈리면 더 놀란다). */
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") link.end();
@@ -336,8 +336,9 @@ export function PhoneStudio({ link, trayCount, trayMax, onClosed }: PhoneStudioP
             <span className="mon-chip mono tnum">
               {trayCount}/{trayMax}
             </span>
+            {/* 마치는 순간 등록까지 간다 — 버튼이 그 사실을 말해야 한다. */}
             <button type="button" className="mon-end" onClick={link.end}>
-              촬영 마치기
+              마치고 등록
             </button>
           </div>
         </div>
