@@ -35,6 +35,16 @@ export async function runPipeline(input: RunPipelineInput): Promise<void> {
      * await 하지 않는다. .catch() 를 반드시 감는다 (unhandled rejection 방지).
      * 샷 플랜 LLM 에 참조 사진을 직접 첨부하므로 상품명 없이도 장면을 설계할 수 있다.
      */
+    /**
+     * 대표 컷(썸네일)이 정착하는 즉시 알리는 신호.
+     * 상세 패널이 이걸 기다렸다가 1순위 참조로 써야 썸네일 → 상세페이지 일관성이 선다.
+     * 스위트 전체가 끝날 때까지 기다리면 갤러리·재시도까지 다 기다리게 되어 너무 늦다.
+     */
+    let resolveHero: (filePath: string | null) => void = () => undefined;
+    const heroReady = new Promise<string | null>((resolve) => {
+      resolveHero = resolve;
+    });
+
     const imageSuitePromise: Promise<ImageSuiteResult> = generateImageSuite({
       listingId,
       photoPaths: listing.photoPaths,
@@ -44,12 +54,21 @@ export async function runPipeline(input: RunPipelineInput): Promise<void> {
       specFacts: [],
       config,
       signal: suiteAbort.signal,
-    }).catch((error: unknown): ImageSuiteResult => ({
-      main: null,
-      gallery: [],
-      detailCuts: [],
-      warnings: [`이미지 연출 실패: ${message(error)}`],
-    }));
+      onHeroReady: (filePath) => resolveHero(filePath),
+    })
+      .then((result) => {
+        resolveHero(result.main?.filePath ?? null);
+        return result;
+      })
+      .catch((error: unknown): ImageSuiteResult => {
+        resolveHero(null);
+        return {
+          main: null,
+          gallery: [],
+          detailCuts: [],
+          warnings: [`이미지 연출 실패: ${message(error)}`],
+        };
+      });
 
     let draft: ListingDraft;
     let toolOutcomes: AgentToolOutcomes | null = null;
@@ -82,6 +101,7 @@ export async function runPipeline(input: RunPipelineInput): Promise<void> {
 
     if (draft.riskLevel === "high") {
       suiteAbort.abort();
+      resolveHero(null);
     }
 
     await orchestrateListing({
@@ -93,6 +113,7 @@ export async function runPipeline(input: RunPipelineInput): Promise<void> {
       mode: env.SMARTSTORE_MODE,
       sellerNote: listing.sellerNote,
       imageSuitePromise,
+      heroReady,
       toolOutcomes,
       config,
     });

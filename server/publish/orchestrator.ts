@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
+import { sleep } from "../commerce/http.js";
 import { appendEvent, setStage } from "../events.js";
 import { ensureListingAssetDirectory, listingAssetUrl, updateListing } from "../store.js";
 import { hasLiveSmartstoreCredentials } from "../env.js";
@@ -43,6 +44,9 @@ import type {
   TagResolution,
 } from "../../src/domain/types";
 
+/** 상세 패널이 승인된 썸네일을 기다리는 상한. 넘으면 원본 사진 참조로 진행한다. */
+const HERO_WAIT_MS = 120_000;
+
 export interface OrchestratorInput {
   listingId: string;
   draft: ListingDraft;
@@ -52,6 +56,8 @@ export interface OrchestratorInput {
   mode: "live" | "dry-run";
   sellerNote: string | null;
   imageSuitePromise: Promise<ImageSuiteResult>;
+  /** 대표 컷(썸네일) 경로. 정착하는 즉시 resolve 된다 — 상세 패널이 이걸 기다린다. */
+  heroReady: Promise<string | null>;
   toolOutcomes: AgentToolOutcomes | null;
   config: SellerConfig;
 }
@@ -88,11 +94,10 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     await appendEvent(listingId, { source: "runtime", kind: "milestone", label, payload: payload ?? null });
   };
 
-  // 스위트 대표 컷이 먼저 끝나면 패널이 그것을 정체성 앵커로 쓴다.
-  // ⚠ await 하지 않는다 — 기다리면 패널이 대표 컷 뒤로 직렬화된다.
+  // 승인된 썸네일이 상세페이지의 정체성 기준이다.
   let heroPath: string | null = null;
-  void input.imageSuitePromise.then((suite) => {
-    heroPath = suite.main?.filePath ?? null;
+  void input.heroReady.then((filePath) => {
+    heroPath = filePath;
   });
 
   /* ── ① 거부 게이트 — 반드시 재료 생산 앞에 둔다 ── */
@@ -303,6 +308,13 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
           : null,
       )
       .filter((spec): spec is DetailPanelSpec => spec !== null);
+
+    /**
+     * 상세 패널은 승인된 썸네일을 **기다린다**.
+     * 원본 사진만 보고 그리면 썸네일과 상세페이지가 서로 다른 상품처럼 보인다 —
+     * 일관성이 지연보다 중요하다. 다만 상한을 두어 대표가 낙오해도 상세는 완성된다.
+     */
+    await Promise.race([input.heroReady, sleep(HERO_WAIT_MS)]);
 
     try {
       const generated = await generateDetailPanels({

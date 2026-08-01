@@ -120,6 +120,8 @@ export interface GenerateImageSuiteInput {
   specFacts: SpecFact[];
   config: SellerConfig;
   signal?: AbortSignal;
+  /** 대표 컷이 정착하는 즉시 알린다 — 상세 패널이 이걸 앵커로 기다린다. */
+  onHeroReady?: (filePath: string) => void;
 }
 
 export interface PreparedReference {
@@ -238,7 +240,7 @@ function buildPrompt(
       ? `You are given ${referenceCount} reference photos of this one product.`
       : "",
     hasAnchor
-      ? "The LAST reference image is the approved studio hero of this product — match its rendering of the product exactly (same colors, same proportions, same details) and change only the scene around it."
+      ? "The FIRST reference image is the APPROVED STUDIO HERO of this product. It is the authoritative rendering: match its colors, proportions, materials and details exactly. The remaining references only add angles you cannot see in it. Change the scene around the product, never the product."
       : "",
     PRESERVATION_RULES,
   ]
@@ -299,7 +301,8 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
     const quality = isMain ? config.media.mainQuality : config.media.quality;
     const size = isMain ? MAIN_SIZE : GALLERY_SIZE;
     const shotStartedAt = Date.now();
-    const shotReferences = anchor && !isMain ? [...references, anchor] : references;
+    // 승인된 대표 컷을 **맨 앞**에 둔다 — 모델이 첫 참조를 정체성 기준으로 강하게 잡는다.
+    const shotReferences = anchor && !isMain ? [anchor, ...references] : references;
     emit("image.shot_started", {
       kind: shot.kind,
       index,
@@ -329,7 +332,10 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
       const url = listingAssetUrl(input.listingId, filename);
       results[index] = { index, kind: shot.kind, scene: shot.scene, filePath, url };
       failed.delete(index);
-      if (isMain) anchor = { buffer: bytes, name: "approved-hero.jpg" };
+      if (isMain) {
+        anchor = { buffer: bytes, name: "approved-hero.jpg" };
+        input.onHeroReady?.(filePath);
+      }
       emit("image.shot_completed", {
         kind: shot.kind,
         index,
@@ -345,21 +351,39 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
     }
   };
 
-  // 대표 컷을 먼저 만든다 — 나머지 샷이 이걸 앵커로 삼아야 상품 일관성이 유지된다.
-  await Promise.race([renderShot(0), sleep(Math.max(1_000, budgetLeft()))]);
+  /**
+   * 대표 컷을 먼저 만든다 — 나머지 샷과 상세 패널이 이걸 앵커로 삼아야 일관성이 유지된다.
+   * ⚠ 대표에 **전용 서브예산**을 준다. 전체 예산을 대표가 다 쓰면 갤러리까지 통째로
+   *   건너뛰고 결국 "원본 사진으로 등록"까지 떨어진다 — 실제로 그렇게 터졌다.
+   */
+  const mainBudget = Math.max(20_000, Math.floor(budget * 0.55));
+  await Promise.race([renderShot(0), sleep(mainBudget)]);
 
-  if (!input.signal?.aborted && shots.length > 1 && budgetLeft() > 8_000) {
+  // 대표가 낙오해도 갤러리는 반드시 돈다 — 생성 이미지 하나도 없는 상태로 끝내지 않는다.
+  if (!input.signal?.aborted && shots.length > 1 && budgetLeft() > 6_000) {
     const queue = shots.map((_, index) => index).slice(1);
     const workers = Array.from({ length: Math.min(GEN_CONCURRENCY, queue.length) }, async () => {
       while (queue.length > 0) {
         const index = queue.shift();
         if (index === undefined) break;
-        if (budgetLeft() < 5_000 || input.signal?.aborted) break;
+        if (budgetLeft() < 4_000 || input.signal?.aborted) break;
         await renderShot(index);
       }
     });
     // 예산 안에 정착한 샷만 채택한다. 낙오 샷은 백그라운드에서 조용히 끝나더라도 넣지 않는다.
     await Promise.race([Promise.all(workers), sleep(Math.max(1_000, budgetLeft()))]);
+  }
+
+  // 대표가 비었는데 갤러리가 살아 있으면, 갤러리 1번을 대표로 승격한다.
+  // 원본 사진을 대표로 쓰는 것보다 언제나 낫다.
+  if (!results[0] && !input.signal?.aborted) {
+    const promoted = results.findIndex((result) => result !== null);
+    if (promoted > 0) {
+      results[0] = { ...results[promoted]!, index: 0 };
+      results[promoted] = null;
+      warnings.push("대표 컷이 예산 안에 완성되지 않아 생성된 갤러리 컷을 대표로 승격했습니다.");
+      input.onHeroReady?.(results[0]!.filePath);
+    }
   }
 
   // 예산이 넉넉히 남았을 때만 실패 샷을 직렬 재시도한다.

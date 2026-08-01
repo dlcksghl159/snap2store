@@ -67,7 +67,7 @@ The attached ${referenceCount} reference photos are ALL of the SAME single produ
 different angles — combine them into one consistent understanding of that exact object and never
 blend in a different product.${
     hasAnchor
-      ? "\nThe LAST reference image is the approved studio hero of this product — match its rendering of the product exactly."
+      ? "\nThe FIRST reference image is the APPROVED STUDIO HERO — the exact product rendering already used as this listing's thumbnail. It is authoritative: reproduce its colors, proportions, materials, finish and details identically so the detail page and the thumbnail read as one product. The other references only supply angles the hero does not show."
       : ""
   }
 Product identity from the reference photos only: preserve exact shape, silhouette, proportions,
@@ -126,7 +126,8 @@ export async function generateDetailPanels(
     const spec = input.specs[position];
     const panelStartedAt = Date.now();
     const anchor = await anchorFor();
-    const panelReferences = (anchor ? [...references, anchor] : references).slice(
+    // 승인된 썸네일을 **맨 앞**에 둔다 — 상세페이지는 썸네일과 같은 상품으로 읽혀야 한다.
+    const panelReferences = (anchor ? [anchor, ...references] : references).slice(
       0,
       MAX_REFERENCE_IMAGES,
     );
