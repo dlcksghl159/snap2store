@@ -23,7 +23,17 @@ function panelBudgetMs(quality: string): number {
   if (quality === "medium") return 150_000;
   return 110_000;
 }
-const PANEL_CONCURRENCY = 4;
+/**
+ * 패널 동시 생성 상한 — 6컷 기본값을 **한 웨이브에** 다 굽고도 남는 값이다.
+ * 4 였을 때는 6컷이 두 웨이브로 갈려 패널 구간이 샷 하나치의 두 배가 됐다.
+ */
+const PANEL_CONCURRENCY = 12;
+/**
+ * 세로 2:3. **픽셀을 줄여도 빨라지지 않는다** — 2026-08-02 실측(medium, 참조 3장, 2회 평균):
+ *   672×1008 (0.68MP) 42.4s / 832×1248 (1.04MP) 46.9s / 1024×1536 (1.57MP) 46.7s
+ * 픽셀을 57% 줄여 버는 시간이 4초뿐인데, 스마트스토어 상세 본문은 폭 ~860px 로 그려지므로
+ * 672px 는 거기서 확대돼 물러진다. 지연은 크기가 아니라 **품질**이 지배한다.
+ */
 const PANEL_SIZE = "1024x1536";
 
 /** 배경 연속성 — 전 패널이 같은 밝은 중성 배경을 가장자리까지 채운다. */
@@ -104,6 +114,15 @@ export async function generateDetailPanels(
   }
 
   const startedAt = Date.now();
+  const budget = panelBudgetMs(input.config.media.panelQuality);
+  const deadline = startedAt + budget;
+  /*
+    ⚠ 예산은 **결과 스냅샷 시점**과 같아야 한다.
+    예전에는 예산이 끝나도 워커가 계속 돌아서, 늦게 완성된 패널이
+    `image.panel_completed` 를 쏘았다. 그 패널은 이미 스냅샷된 결과에 없으므로
+    무대에는 뜨는데 등록된 상세페이지에는 없는 유령 컷이 됐다.
+  */
+  const expired = (): boolean => Boolean(input.signal?.aborted) || Date.now() >= deadline;
   const directory = await ensureListingAssetDirectory(input.listingId);
   // 업로드한 사진 전부를 참조로 넘긴다 — 한 장만 넘기면 보이지 않던 면을 모델이 창작한다.
   const references = await prepareReferences(input.photoPaths);
@@ -122,7 +141,7 @@ export async function generateDetailPanels(
   };
 
   const renderPanel = async (position: number): Promise<void> => {
-    if (input.signal?.aborted) return;
+    if (expired()) return;
     const spec = input.specs[position];
     const panelStartedAt = Date.now();
     const anchor = await anchorFor();
@@ -149,13 +168,14 @@ export async function generateDetailPanels(
         ),
         prompt: buildPanelPrompt(spec, input.productName, panelReferences.length, Boolean(anchor)),
         size: PANEL_SIZE as never,
-        quality: input.config.media.quality as never,
+        quality: input.config.media.panelQuality as never,
         output_format: "jpeg",
         output_compression: 92,
       });
       const b64 = response.data?.[0]?.b64_json;
       if (!b64) throw new Error("패널 응답이 비어 있습니다.");
-      if (input.signal?.aborted) return;
+      // 예산을 넘겨 도착했다 — 결과에도 넣지 않고 방송도 하지 않는다.
+      if (expired()) return;
 
       const filename = `panel-${position + 1}-${spec.role}.jpg`;
       const filePath = path.join(directory, filename);
@@ -187,14 +207,14 @@ export async function generateDetailPanels(
 
   const queue = input.specs.map((_, index) => index);
   const workers = Array.from({ length: Math.min(PANEL_CONCURRENCY, queue.length) }, async () => {
-    while (queue.length > 0) {
+    // 예산이 끝나면 남은 일감을 새로 집지 않는다 — 버려질 그림을 굽지 않기 위해서다.
+    while (queue.length > 0 && !expired()) {
       const index = queue.shift();
       if (index === undefined) break;
       await renderPanel(index);
     }
   });
 
-  const budget = panelBudgetMs(input.config.media.quality);
   const elapsed = (): number => Date.now() - startedAt;
   await Promise.race([Promise.all(workers), sleep(Math.max(1_000, budget - elapsed()))]);
 

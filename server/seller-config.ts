@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { DEFAULT_DISCOUNT_RATE } from "../src/domain/pricing.js";
 import { z } from "zod";
 import { env } from "./env.js";
 
@@ -62,6 +63,13 @@ const SellerConfigSchema = z.object({
       anchor: z.enum(["conservative", "median"]).default("conservative"),
       minSalePrice: z.number().int().min(100).default(1000),
       fallbackPolicy: z.enum(["review", "agent"]).default("review"),
+      /**
+       * 즉시할인 목표율(%). 0 이면 할인을 걸지 않는다.
+       * 산출된 판매가는 **고객이 실제로 내는 값**으로 고정하고, 정가를 이 비율만큼
+       * 역산해 올린 뒤 차액을 즉시할인으로 등록한다 — 화면의 빗금·빨간 가격이
+       * 실제 스마트스토어 상품 페이지와 같은 숫자가 된다.
+       */
+      discountRate: z.number().int().min(0).max(50).default(DEFAULT_DISCOUNT_RATE),
     })
     .prefault({}),
   kc: z
@@ -79,11 +87,30 @@ const SellerConfigSchema = z.object({
     .object({
       galleryCount: z.number().int().min(0).max(4).default(2),
       detailPanelCount: z.number().int().min(0).max(8).default(6),
-      // 속도 우선 기본값 — high 는 샷당 1분을 넘길 수 있다.
-      // 품질이 아쉬우면 mainQuality(대표 컷)부터 올린다. 시간이 모자라면
-      // 품질보다 galleryCount / detailPanelCount(개수)를 먼저 줄인다.
+      /*
+        품질은 **샷당 지연을 지배하는 유일한 축**이다 (2026-08-02 gpt-image-2 실측,
+        참조 3장 · 회차 2회 평균):
+          low    20.6s  — 크기 무관(816² 21.2s / 1024² 20.6s / 1024×1536 20.5s)
+          medium 51.5s  — low 의 2.5배
+          high  145.1s  — low 의 7배. 이미지 클라이언트 타임아웃(150s)에 걸려
+                          2회 중 1회가 실패했다. 사실상 쓸 수 없는 값이다.
+        참조 수는 거의 영향이 없다(medium 1장 48.1s vs 3장 51.5s).
+
+        ⚠ mainQuality 는 특히 비싸다. 상세 패널이 대표 컷을 정체성 앵커로 **기다리므로**
+        (orchestrator 의 HERO_WAIT_MS) 그 지연이 그대로 임계경로에 얹힌다 —
+        medium 이면 전체 런이 ~78s, low 면 ~55s.
+        시간이 모자라면 품질보다 galleryCount / detailPanelCount(개수)를 먼저 줄인다.
+      */
+      /** 갤러리(추가 컷) 품질. */
       quality: z.enum(["low", "medium", "high"]).default("low"),
-      mainQuality: z.enum(["low", "medium", "high"]).default("medium"),
+      /** 대표 컷(썸네일) 품질 — 임계경로에 직결된다. 위 주석 참고. */
+      mainQuality: z.enum(["low", "medium", "high"]).default("low"),
+      /**
+       * 상세 패널 품질. 패널은 **6컷이 한 웨이브로 동시에** 구워지므로 품질을 올려도
+       * 벽시계는 샷 하나치만 늘어난다 — 갤러리·대표와 따로 잡을 값어치가 있다.
+       * (상세페이지는 구매를 결정짓는 자리라 본문 그림에 품질을 더 쓴다.)
+       */
+      panelQuality: z.enum(["low", "medium", "high"]).default("medium"),
     })
     .prefault({}),
 });

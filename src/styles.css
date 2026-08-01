@@ -1,8 +1,12 @@
 /* ═══════════════════════════════════════════════════════════════
-   Snap2Store — "백지의 상점, 차콜의 무대"
-   장면 1 라이트 제품면 (랜딩·목록·드로어·결과): 백지 위 잉크
-   장면 2 차콜 스테이지 (등록 실황): 풀블리드 차콜 위 화이트 잉크
-   두 장면을 묶는 유일한 브랜드 목소리는 블루 하나다.
+   Snap2Store — "백지의 상점"
+   랜딩 · 등록 실황 · 결과 · 목록 · 드로어 — 전부 백지 위 잉크 한 장면이다.
+   브랜드 목소리는 블루 하나, 판정색(그린·앰버·레드)은 상태 전용.
+
+   ⚠ 등록 실황은 원래 차콜 풀블리드였다. 어두운 면에서 흐린 회색 글자가 2.4~3.8:1
+   까지 떨어져 빈 칸 이름·근거 문구가 사실상 안 읽혔다(실측). 라이트면에서는 가장
+   흐린 토큰조차 5:1 을 넘는다 — 어둡게 만드는 것과 잘 보이는 것은 함께 갈 수 없었다.
+   유일한 다크 표면은 폰 링크 스튜디오(.mon-*)뿐이고, 거기서만 --stage-* 원본 값을 쓴다.
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
@@ -34,17 +38,26 @@
   --red-soft: rgba(240, 68, 56, 0.12);
   --magenta: #c77dff;
   --naver-green: #03c75a; /* 등록 목적지 마크 전용 — 판정·장식 사용 금지 */
+  /* 커머스 색 — 스마트스토어 상품 페이지의 문법이다. 판정색과 역할이 다르다:
+     빨강은 "위험"이 아니라 **할인가**, 초록은 "통과"가 아니라 **매대(카테고리)**. */
+  --sale: #f5323a;
+  --sale-deep: #d61920;
+  --sale-soft: rgba(245, 50, 58, 0.1);
+  --shelf-ink: #06803d;
+  --shelf-soft: rgba(3, 199, 90, 0.12);
   --search-blue: #7a9cff; /* 어두운 무대에서 블루 채널 가독용 */
 
   /* 스테이지(다크) */
   --stage: #0e0f12;
   --stage-raised: #16181d;
-  --stage-panel: rgba(255, 255, 255, 0.04);
-  --stage-panel-strong: rgba(255, 255, 255, 0.07);
-  --stage-line: rgba(255, 255, 255, 0.09);
+  --stage-panel: rgba(255, 255, 255, 0.055);
+  --stage-panel-strong: rgba(255, 255, 255, 0.1);
+  --stage-line: rgba(255, 255, 255, 0.14);
   --stage-text: #f2f4f8;
-  --stage-dim: rgba(242, 244, 248, 0.6);
-  --stage-faint: rgba(242, 244, 248, 0.42);
+  /* ⚠ 알파가 곧 가독성이다 (실측): 0.42 는 무대 위에서 3.8:1 로 AA 미달이었다.
+     0.56 = 5.5:1, 0.72 = 7:1. 어두운 무대에서 흐린 회색은 "연출"이 아니라 안 보이는 글자다. */
+  --stage-dim: rgba(242, 244, 248, 0.72);
+  --stage-faint: rgba(242, 244, 248, 0.56);
   --stage-green: #3ccb8b;
   --stage-amber: #ffb454;
   --stage-red: #ff6b5e;
@@ -169,10 +182,6 @@ textarea {
   border-radius: 4px;
 }
 
-.stage :focus-visible {
-  outline-color: rgba(242, 244, 248, 0.5);
-}
-
 /* ── 모션 프리미티브 ─────────────────────────────────────────── */
 
 @keyframes rise-in {
@@ -210,18 +219,6 @@ textarea {
   }
 }
 
-/* 잉크 스윕 — 슬롯이 채워질 때 1px 선이 훑고 지나간다. 글로우가 아니다. */
-@keyframes ink-sweep {
-  from {
-    transform: scaleX(0);
-    opacity: 1;
-  }
-  to {
-    transform: scaleX(1);
-    opacity: 0;
-  }
-}
-
 @keyframes target-pulse {
   0%,
   100% {
@@ -244,33 +241,6 @@ textarea {
   }
 }
 
-@keyframes stamp-land {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(2) rotate(-14deg);
-  }
-  60% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(0.94) rotate(-8deg);
-  }
-  100% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1) rotate(-9deg);
-  }
-}
-
-@keyframes headline-finish {
-  0% {
-    transform: translate3d(0, 10px, 0) scale(1);
-  }
-  62% {
-    transform: translate3d(0, 0, 0) scale(1.015);
-  }
-  100% {
-    transform: none;
-  }
-}
-
 @keyframes shimmer-track {
   from {
     background-position: -160% 0;
@@ -284,6 +254,11 @@ textarea {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* 상태 스피너 — 무대에서 유일하게 계속 도는 것. "아직 진행 중"이라는 사실 자체다. */
+.spin {
+  animation: spin 1.1s linear infinite;
 }
 
 .rise {
@@ -412,13 +387,13 @@ textarea {
 }
 
 .btn-ghost-dark {
-  background: transparent;
-  border: 1px solid var(--stage-line);
-  color: var(--stage-text);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink);
 }
 
 .btn-ghost-dark:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--paper-soft);
 }
 
 .btn .arrow {
@@ -2100,7 +2075,548 @@ textarea {
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.75);
 }
 
-/* ── 스테이지 (차콜 풀블리드) ────────────────────────────────── */
+/* ═══════════════ 랜딩 이후 (발사 → 무대 → 결과 → 목록) ═══════════════
+   기준 구현: smart-sell/.worktrees/agent24-snap2store 의 조립 무대.
+   토큰은 동일하므로 규칙을 그대로 쓴다 — 이 구간을 부분 수정하면 원본과 어긋난다.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* --- 발사 전환 — 등록 시작 → 스테이지 인수인계 ------------------------------- */
+
+.launch {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.launch-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--stage);
+  animation: fade-in 420ms ease-out both;
+}
+
+.launch-clone {
+  position: absolute;
+  will-change: transform;
+}
+
+.launch-clone img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  display: block;
+}
+
+.launch-caption {
+  position: absolute;
+  left: 50%;
+  top: calc(44% + min(20vh, 210px));
+  transform: translateX(-50%);
+  margin: 0;
+  color: var(--stage-text);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  animation: launch-caption-in 420ms var(--ease-out) 480ms forwards;
+}
+
+@keyframes launch-caption-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+/* --- 올린 물건 ------------------------------------------------------------------ */
+
+.library {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: clamp(32px, 5vh, 56px) clamp(20px, 4vw, 48px) 80px;
+}
+
+.library-head h1 {
+  margin: 0;
+  font-size: clamp(1.7rem, 2.4vw, 2.3rem);
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+
+.library-head p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.library-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  padding: 60px 0;
+  justify-content: center;
+}
+
+.library-empty {
+  text-align: center;
+  padding: 72px 0;
+  color: var(--faint);
+}
+
+.library-empty h2 {
+  margin: 14px 0 20px;
+  font-size: 18px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.library-grid {
+  margin-top: 26px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px;
+}
+
+.item {
+  text-align: left;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  overflow: hidden;
+  transition: box-shadow 180ms ease, transform 180ms var(--ease-out);
+}
+
+.item:hover {
+  box-shadow: var(--shadow-pop);
+  transform: translateY(-2px);
+}
+
+.item-img {
+  aspect-ratio: 1;
+  background: var(--paper-soft);
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+}
+
+.item-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.item-body {
+  padding: 14px 16px 16px;
+}
+
+.item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.item-meta time {
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.item-body h2 {
+  margin: 10px 0 0;
+  font-size: 15px;
+  line-height: 1.45;
+  font-weight: 700;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.item-body p {
+  margin: 6px 0 0;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+
+.status-registered {
+  background: var(--green-soft);
+  color: var(--green-deep);
+}
+
+.status-needs_review {
+  background: var(--amber-soft);
+  color: var(--amber-deep);
+}
+
+.status-failed {
+  background: var(--red-soft);
+  color: var(--red-deep);
+}
+
+.status-running,
+.status-queued {
+  background: var(--blue-soft);
+  color: var(--blue-deep);
+}
+/* --- 상세 드로어 ------------------------------------------------------------------ */
+
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(15, 20, 28, 0.5);
+  display: flex;
+  justify-content: flex-end;
+  animation: fade-in 180ms ease-out;
+}
+
+.detail-drawer {
+  position: relative;
+  width: min(500px, 94vw);
+  height: 100%;
+  background: var(--paper);
+  overflow-y: auto;
+  animation: drawer-in 320ms var(--ease-out);
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+}
+
+.drawer-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(25, 31, 40, 0.65);
+  color: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.detail-hero {
+  height: 240px;
+  background: var(--paper-soft);
+}
+
+.detail-hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.detail-content {
+  padding: 22px 24px 48px;
+}
+
+.detail-content h2 {
+  margin: 12px 0 0;
+  font-size: 20px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.detail-summary {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.65;
+}
+
+.detail-facts {
+  margin: 18px 0 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.detail-facts div {
+  min-width: 0;
+}
+
+.detail-facts dt {
+  font-size: 12.5px;
+  color: var(--faint);
+}
+
+.detail-facts dd {
+  margin: 3px 0 0;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.detail-facts a {
+  color: var(--blue);
+}
+
+.drawer-section {
+  margin-top: 26px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+.drawer-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.resolution-panel {
+  background: var(--amber-soft);
+  border: 0;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.resolution-panel h3 {
+  color: var(--amber-deep);
+}
+
+.block-reasons {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.drawer-concept {
+  margin: 0;
+  font-size: 16.5px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.drawer-angle {
+  margin: 6px 0 12px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+.drawer-sections {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.drawer-sections li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-soft);
+}
+
+.drawer-sections li:first-child {
+  border-top: 0;
+}
+
+.drawer-sections span {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue-deep);
+  background: var(--blue-soft);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+.materials-list,
+.evidence-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.materials-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.material-flag {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green-deep);
+  font-size: 12px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+
+.material-flag-warn {
+  background: var(--amber-soft);
+  color: var(--amber-deep);
+}
+
+.materials-list strong {
+  font-size: 13.5px;
+}
+
+.materials-list p {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.evidence-list li {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.fact-kind {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+.fact-observed {
+  background: var(--green-soft);
+  color: var(--green-deep);
+}
+
+.fact-verified {
+  background: var(--blue-soft);
+  color: var(--blue-deep);
+}
+
+.fact-configured {
+  background: var(--paper-soft);
+  color: var(--muted);
+}
+
+.fact-inferred {
+  background: var(--amber-soft);
+  color: var(--amber-deep);
+}
+
+.fact-unresolved {
+  background: var(--red-soft);
+  color: var(--red-deep);
+}
+
+.evidence-list p {
+  margin: 8px 0 2px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.evidence-list small {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.agent-stream {
+  margin-top: 26px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.agent-stream summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.agent-stream ul {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.event-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.event-line time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.event-line strong {
+  color: var(--ink);
+}
+
+.agent-stream pre {
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  background: var(--paper-soft);
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-x: auto;
+  color: var(--ink-soft);
+}
+/* ============================================================
+   등록 실황 스테이지 (풀블리드 · 센터 오브제)
+   ============================================================ */
+
+/*
+  무대는 **라이트면**이다. 차콜 무대에서는 흐린 회색 글자가 3:1 대까지 떨어져
+  빈 칸 이름·근거 문구가 사실상 안 읽혔다 (실측). 백지 위 잉크로 가면 가장 흐린
+  토큰(--faint)조차 5.3:1 이고, 랜딩·결과·목록과 장면이 하나로 이어진다.
+
+  ⚠ --stage-* 토큰은 **여기서만** 재정의한다. 폰 링크 스튜디오(.mon-*)는 같은
+  토큰으로 어두운 모니터를 그리므로 전역에서 바꾸면 그쪽이 무너진다.
+  .launch 도 무대 색으로 페이드하므로 같은 값을 받는다.
+*/
+.stage,
+.launch {
+  --stage: var(--paper-soft);
+  --stage-raised: var(--paper);
+  --stage-panel: var(--paper);
+  --stage-panel-strong: var(--line-soft);
+  --stage-line: var(--line);
+  --stage-text: var(--ink);
+  --stage-dim: var(--muted);
+  --stage-faint: var(--faint);
+  --stage-green: var(--green-deep);
+  --stage-amber: var(--amber-deep);
+  --stage-red: var(--red-deep);
+}
 
 .stage {
   position: fixed;
@@ -2109,25 +2625,16 @@ textarea {
   background: var(--stage);
   color: var(--stage-text);
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  padding: clamp(16px, 2.6vh, 28px) clamp(20px, 3.4vw, 56px) clamp(16px, 2.8vh, 32px);
-  gap: clamp(10px, 1.8vh, 20px);
-  animation: fade-in 320ms var(--ease-out) both;
-  /* 무대 캡처 보호 — 네이티브 스크롤바를 절대 보이지 않는다. */
-  scrollbar-width: none;
-  overflow: hidden;
+  grid-template-rows: auto auto 1fr auto;
+  padding: clamp(12px, 1.8vh, 20px) clamp(16px, 2.4vw, 40px) clamp(12px, 2vh, 22px);
+  gap: clamp(8px, 1.4vh, 16px);
 }
 
-.stage *::-webkit-scrollbar {
-  display: none;
-}
-
-/* ⚠ 그리드 자식의 min-content 폭이 트랙을 밀어내면 좁은 폭에서 톱밴드가 뷰포트 밖으로 나간다.
-   원인이 전혀 드러나지 않는 종류의 결함이라 무대 직계 자식 전부에 규칙으로 건다. */
-.stage > *,
+/* 그리드 아이템의 min-content 전파 차단 — 폰 스트립(내부 스크롤)의 콘텐츠 폭이
+   트랙을 밀어 톱밴드 칩을 뷰포트 밖으로 밀어내는 것을 막는다 (390px 실측). */
 .stage-top,
-.stage-arena,
 .stage-lede,
+.stage-arena,
 .stage-strip {
   min-width: 0;
 }
@@ -2135,270 +2642,242 @@ textarea {
 .stage-top {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .stage-brand {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 9px;
-  font-size: 14px;
+  font-family: var(--font-sans);
+  font-size: 18px;
   font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.stage-brand em {
-  font-style: normal;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--stage-faint);
-}
-
-.stage-chips {
-  margin-left: auto;
-  display: flex;
-  gap: 6px;
+  letter-spacing: -0.03em;
+  display: inline-flex;
   align-items: center;
+  gap: 10px;
+}
+
+.stage-brand-chip {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--stage-dim);
+  border: 1px solid var(--stage-line);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+
+.stage-top-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .stage-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  border: 1px solid var(--stage-line);
-  padding: 5px 12px;
+  gap: 5px;
   font-size: 12px;
   font-weight: 700;
+  border: 1px solid var(--stage-line);
+  border-radius: 999px;
+  padding: 5px 12px;
   color: var(--stage-dim);
-  font-variant-numeric: tabular-nums;
+  text-decoration: none;
 }
 
 .stage-chip-mono {
   font-family: var(--font-mono);
   font-weight: 500;
-  font-size: 11.5px;
+}
+
+.stage-chip-rehearsal {
+  background: rgba(247, 144, 9, 0.16);
+  border-color: transparent;
+  color: var(--stage-amber);
+  letter-spacing: 0.02em;
 }
 
 .stage-chip-link {
-  transition:
-    color 160ms ease,
-    border-color 160ms ease;
+  color: var(--stage-dim);
+  transition: color 140ms ease, border-color 140ms ease;
 }
 
 .stage-chip-link:hover {
   color: var(--stage-text);
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: var(--ink);
 }
 
-.stage-lede {
-  text-align: center;
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
+/* --- 본무대 — 조립이 주인공 -------------------------------------------------- */
 
-.stage-lede h2 {
-  font-size: clamp(2.1rem, 3.4vw + 0.6rem, 4.6rem);
-  font-weight: 800;
-  line-height: 1.14;
-  letter-spacing: -0.032em;
-  animation: rise-in 520ms var(--ease-out) both;
-}
-
-.stage-lede h2.finish {
-  animation: headline-finish 640ms var(--ease-out) both;
-}
-
-.stage-lede p {
-  font-size: clamp(13px, 0.6vw + 0.6rem, 15.5px);
-  color: var(--stage-dim);
-  font-weight: 500;
-  max-width: 62ch;
-  margin: 0 auto;
-  animation: fade-in 520ms var(--ease-out) 90ms both;
-}
-
-.stage-arena {
-  display: grid;
-  place-items: center;
-  position: relative;
-  min-height: 0;
-}
-
-.stage-strip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.evidence {
-  flex: 0 0 auto;
-  width: 54px;
-  height: 54px;
-  border-radius: var(--r-md);
-  overflow: hidden;
-  border: 1px solid var(--stage-line);
-  background: var(--stage-panel);
-}
-
-.evidence img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.phase-rail {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
+/* 스테이지 안에서는 네이티브 스크롤바를 절대 보이지 않는다 (무대 캡처 보호). */
+.stage-strip ol {
   scrollbar-width: none;
-  min-width: 0;
-  flex: 1;
-  /* 기능 예외 — 스트립 마스크 페이드 */
-  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
 
-.phase-rail::-webkit-scrollbar {
+.stage-strip ol::-webkit-scrollbar {
   display: none;
 }
 
-.phase {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border-radius: 999px;
-  padding: 7px 14px;
+/* 씬 내레이션 — 틀 위 한 줄. 관객이 "지금 뭘 하는지"를 먼저 읽는다. */
+.stage-lede {
+  text-align: center;
+}
+
+/* 헤드라인은 여전히 뒷줄이 읽을 크기지만, 주인공은 조립 틀이다 — 내레이션이
+   세로 공간을 먹을수록 무대가 작아진다 (1904x948에서 90px -> 60px 회수). */
+.stage-lede h1 {
+  margin: 0;
+  font-size: clamp(1.3rem, 1.5vw + 0.42rem, 2.1rem);
+  line-height: 1.22;
+  letter-spacing: -0.032em;
+  font-weight: 800;
+  animation: rise-in 460ms var(--ease-out) both;
+}
+
+.stage-lede p {
+  margin: 4px 0 0;
+  font-size: clamp(0.95rem, 0.86vw, 1.05rem);
+  line-height: 1.45;
+  color: var(--stage-dim);
+  animation: rise-in 460ms var(--ease-out) 60ms both;
+}
+
+.stage-lede .stage-rehearsal-tag {
+  margin: 8px auto 0;
+  width: fit-content;
   font-size: 12px;
   font-weight: 700;
-  color: var(--stage-faint);
-  border: 1px solid transparent;
-  transition:
-    background 260ms var(--ease-out),
-    color 260ms ease,
-    opacity 260ms ease;
+  color: var(--stage-amber);
+  background: rgba(247, 144, 9, 0.14);
+  border-radius: 999px;
+  padding: 4px 12px;
+  line-height: 1.4;
+}
+
+/* 원본 사진 — 하단 스트립의 첫 자리. 발사 전환의 착지점이자 before의 근거. */
+.stage-origin {
+  margin: 0;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  animation: rise-in 460ms var(--ease-out) 120ms both;
+}
+
+.stage-origin-img {
+  position: relative;
+  flex: none;
+  width: 46px;
+  display: block;
+}
+
+.stage-origin-img img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--stage-line);
+  display: block;
+}
+
+.stage-scanline {
+  display: none;
+}
+
+/* 상품군 인식 전 — 원본 사진 위 판독 스캔라인. */
+.stage-origin.is-scanning .stage-scanline {
+  display: block;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 18%;
+  background: rgba(49, 96, 240, 0.14);
+  border-bottom: 1.5px solid var(--blue);
+  animation: scan 2.1s var(--ease-out) infinite;
+  pointer-events: none;
+}
+
+@keyframes scan {
+  to {
+    top: 82%;
+  }
+}
+
+.stage-origin figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11.5px;
+  color: var(--stage-dim);
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.phase b {
-  font-family: var(--font-mono);
+.stage-origin-k {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10.5px;
-  font-weight: 500;
-  opacity: 0.7;
-}
-
-.phase i {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: currentColor;
-  flex: 0 0 auto;
-}
-
-.phase.active {
-  background: var(--blue);
-  color: #fff;
-}
-
-.phase.active i {
-  animation: dot-breathe 1.4s var(--ease-in-out) infinite;
-}
-
-.phase.done {
-  background: var(--stage-panel);
-  color: var(--stage-dim);
-}
-
-.phase.done i {
-  background: var(--stage-green);
-}
-
-/* 생략은 대기와 반드시 구분한다 */
-.phase.skipped {
-  opacity: 0.62;
+  font-weight: 700;
   color: var(--stage-faint);
 }
 
-.phase.skipped i {
-  background: transparent;
-  border: 1px dashed currentColor;
-  width: 8px;
-  height: 8px;
-}
-
-.phase.skipped u {
-  text-decoration: none;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  border-radius: 5px;
-  padding: 1px 5px;
-  border: 1px solid var(--stage-line);
-}
-
-.phase.blocked {
-  background: rgba(255, 107, 94, 0.16);
-  color: var(--stage-red);
-}
-
-.progress {
-  height: 3px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  margin-top: 2px;
-}
-
-.progress span {
-  display: block;
-  height: 100%;
-  width: 100%;
-  border-radius: 999px;
-  background: var(--blue);
-  transform-origin: 0 50%;
-  transform: scaleX(var(--p, 0));
-  transition:
-    transform 700ms var(--ease-out),
-    background 500ms ease;
-}
-
-.progress.done span {
-  background: var(--stage-green);
-}
-
-/* ── 조립 틀 (Signature) ─────────────────────────────────────── */
-
-.frame {
-  width: min(100%, 1280px, max(720px, calc(190vh - 620px)));
-  height: 100%;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--stage-line);
-  background: var(--stage-raised);
-  overflow: hidden;
-  position: relative;
+.stage-arena {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  animation: rise-in 520ms var(--ease-out) both;
+  min-height: 0;
+}
+
+/* --- 등록안 조립 무대 ------------------------------------------------------- */
+
+.assembly {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 스마트스토어 상품 페이지 모양의 "틀" — 산출물이 장착될 슬롯이 상주한다.
+   무대의 유일한 주인공이므로 가용 공간을 끝까지 쓴다.
+   ⚠ 폭을 세로 높이에서 역산하지 않는다(예전 `190vh - 620px`). 노트북 화면에서
+   틀이 뷰포트의 60%까지 쪼그라들어 무대 양옆이 텅 비었다. 대신 넓어지면 상세페이지가
+   세 번째 칼럼으로 올라가 가로를 쓰므로, 납작해지지 않으면서 화면을 채운다. */
+.frame {
+  position: relative;
+  width: min(100%, 1640px);
+  height: 100%;
+  background: var(--stage-panel);
+  border: 1px solid var(--stage-line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: rise-in 460ms var(--ease-out) 80ms both;
+  transition: border-color 400ms ease;
 }
 
 .frame-chrome {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 12px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--stage-line);
-  background: var(--stage-panel);
-  flex-wrap: wrap;
 }
 
 .frame-dots {
-  display: flex;
+  display: inline-flex;
   gap: 5px;
 }
 
@@ -2406,1238 +2885,1873 @@ textarea {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--line);
 }
 
 .frame-url {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--stage-faint);
-  border: 1px solid var(--stage-line);
-  border-radius: 999px;
-  padding: 4px 12px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-}
-
-.frame-url svg {
-  color: var(--stage-green);
-  flex: 0 0 auto;
-}
-
-.frame-state {
-  margin-left: auto;
-  font-size: 11.5px;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 12px;
   color: var(--stage-dim);
   border: 1px solid var(--stage-line);
   border-radius: 999px;
-  padding: 4px 11px;
+  padding: 4px 14px;
+  background: var(--paper-soft);
 }
 
-/* 틀은 절대 세로로 넘치지 않는다 — 넘치면 갤러리·상세 슬롯이 조용히 사라지고
-   "칸이 스스로 채워지는 화면"이라는 약속이 깨진다. 모든 미디어는 높이 기준으로 잡는다. */
+.frame-url.is-live {
+  color: var(--stage-green);
+  border-color: rgba(23, 178, 106, 0.45);
+}
+
+.frame-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--stage-dim);
+  white-space: nowrap;
+}
+
+.frame-chip .spin {
+  color: var(--stage-amber);
+}
+
+.frame-chip.is-done {
+  color: var(--stage-green);
+}
+
+/* 넓은 화면: 사진 · 등록 정보 · 상세페이지 세 칼럼. 상세를 아래로 깔면 틀이 세로로
+   길어져 폭을 못 쓰고 패널이 손톱만 해진다. */
 .frame-body {
+  flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: clamp(10px, 1.4vw, 18px);
-  padding: clamp(12px, 1.8vh, 20px);
-  min-width: 0;
+  grid-template-columns: minmax(0, 0.31fr) minmax(0, 0.31fr) minmax(0, 0.38fr);
+  gap: clamp(18px, 2vw, 32px);
+  padding: clamp(16px, 1.6vw, 26px);
   min-height: 0;
   overflow: hidden;
 }
 
 .frame-media {
-  grid-column: 1;
-  grid-row: 1;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 10px;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* 정보 열은 무대 높이에 맞춰 스스로 조여진다 — 잘려 나가면
-   "필수 표시 항목"처럼 통째로 사라지는 칸이 생기고, 무대가 거짓말을 한다. */
-.frame-info {
-  grid-column: 2;
-  grid-row: 1;
-  display: grid;
-  align-content: start;
-  gap: clamp(4px, 0.6vh, 9px);
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.frame-gallery {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 9px;
   min-width: 0;
+  min-height: 0;
 }
 
-/* 슬롯 */
+/* --- 슬롯 공통 — 유령(대기) → 장착(도착 펄스) ------------------------------- */
+
 .slot {
   position: relative;
-  border-radius: var(--r-md);
   min-width: 0;
-  transition:
-    border-color 240ms ease,
-    background 240ms ease;
 }
 
+/* 빈 슬롯은 "여기에 무엇이 들어와야 하는지"를 스스로 말한다 — 회색 사각형만
+   늘어놓으면 관객은 무엇이 비어 있는지조차 모른다. */
 .slot-ghost {
-  border: 1.5px dashed var(--stage-line);
-  background: transparent;
-  display: grid;
-  place-content: center;
-  align-content: center;
-  gap: 3px;
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  height: 100%;
+  padding: 6px;
   text-align: center;
+  color: var(--stage-dim);
+  font-size: 13.5px;
+  font-weight: 600;
+  border: 1.5px dashed #d3d8de;
+  border-radius: 12px;
+  background: var(--paper-soft);
 }
 
-.slot-ghost b {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--stage-faint);
-}
-
-.slot-ghost span {
-  font-size: 11px;
-  color: rgba(242, 244, 248, 0.3);
+.slot-ghost em {
+  font-style: normal;
+  font-size: 12.5px;
   font-weight: 500;
+  color: #5f6a79;
+  line-height: 1.35;
 }
 
-/* 착지 예정 점등 — "저게 여기 들어가는구나"가 도착 전에 읽히게 */
-.slot.is-target .slot-ghost {
-  animation: target-pulse 900ms var(--ease-in-out) infinite;
-  background: rgba(49, 96, 240, 0.08);
+/* 정보 칼럼의 유령은 회색 막대가 아니라 칸 이름이다. */
+.ghost-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--stage-dim);
 }
 
-.slot.is-filled {
-  animation: slot-settle 420ms var(--ease-out) both;
+/*
+  장착은 "촥" 꽂히는 동작이다 — 다만 힘은 **타이밍**에서 나오지 효과 개수에서 나오지 않는다.
+  섬광 · 튀는 스케일 · 굵은 링을 겹치면 화면이 소란스러워지고, 정작 무엇이 꽂혔는지는
+  덜 보인다. 남긴 건 둘뿐이다: 살짝 큰 상태에서 눌리며 자리를 넘겨받는 압착 하나,
+  그리고 그 자리를 한 번 짚어 주는 얇은 링 하나.
+*/
+.slot-fill {
+  position: relative;
+  height: 100%;
+  animation: slot-arrive 260ms cubic-bezier(0.24, 0.8, 0.28, 1) both;
 }
 
+/*
+  사진 칸은 **즉시** 나타난다. 날아온 카드와 같은 사진이 같은 자리·같은 크기로 이어받는
+  것이라, 여기서 한 번 더 흐렸다 나타나면 "붙었다가 다시 그려지는" 두 동작으로 읽힌다.
+*/
+.slot-thumb .slot-fill,
+.slot-gallery .slot-fill,
+.slot-panel .slot-fill {
+  animation: none;
+}
+
+@keyframes slot-arrive {
+  0% {
+    opacity: 0.45;
+    transform: scale(1.028);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 장착 자리를 한 번 짚는 링 — 얇게, 빠르게, 한 번만. */
 .slot.is-filled::after {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1.5px;
-  background: var(--blue);
-  transform-origin: 0 50%;
-  border-radius: 999px;
-  animation: ink-sweep 620ms var(--ease-out) both;
+  inset: -3px;
+  border-radius: 14px;
+  border: 1.5px solid rgba(49, 96, 240, 0.55);
+  opacity: 0;
   pointer-events: none;
+  animation: slot-ring 340ms ease-out both;
 }
 
-/* 높이에서 정사각을 역산한다 — 폭을 따라가면 틀이 세로로 터진다. */
+@keyframes slot-ring {
+  0% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 산출물이 무대 중앙에 떠 있는 동안 목적지를 먼저 밝힌다 — "저게 여기로
+   들어가는구나"가 도착 전에 읽혀야 조립이 이야기가 된다. */
+/* 착지점은 **켜져 있으면** 된다 — 깜빡이면 시선이 카드에서 떨어져 나간다. */
+.slot.is-target::before,
+.frame-meta.is-target::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 14px;
+  border: 1.5px solid var(--blue);
+  background: rgba(49, 96, 240, 0.07);
+  pointer-events: none;
+  z-index: 1;
+  animation: slot-await 220ms ease-out both;
+}
+
+.frame-meta.is-target {
+  position: relative;
+}
+
+@keyframes slot-await {
+  from {
+    opacity: 0;
+  }
+}
+
+/* 틀 자체에는 opacity를 걸지 않는다 — 스태킹 컨텍스트가 생겨 안쪽 착지점을
+   다시 밝힐 수 없다. 카드와 틀의 분리는 리빌 레이어의 어둠이 맡는다. */
+
+/*
+  대표 이미지는 **칼럼을 꽉 채운다**.
+  ⚠ 종횡비(1:1)를 강제하면 둘 중 하나가 깨진다: 폭으로 정하면 낮은 화면에서 칼럼 밖으로
+  넘쳐 칸이 잘리고, 높이로 정하면 폭이 칼럼보다 좁아져 아래 추가컷 줄과 좌우가 어긋난다
+  (실측 426px 칼럼에 411px 슬롯 → 가운데로 8px 씩 들뜸).
+  그래서 칸은 남는 높이 × 칼럼 폭을 그대로 쓰고, 사진은 cover 로 채운다 — 4% 안쪽의
+  세로 크롭은 눈에 띄지 않지만 어긋난 정렬은 바로 보인다.
+*/
 .slot-thumb {
-  aspect-ratio: 1;
-  height: 100%;
-  width: auto;
-  max-width: 100%;
-  justify-self: center;
+  /* basis 0 — 남는 높이를 그대로 받는다. */
+  flex: 1 1 0;
+  width: 100%;
   min-height: 0;
-  overflow: hidden;
-  background: var(--stage-panel);
 }
 
-.slot-thumb img {
+.slot-thumb .slot-fill img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-.slot-gal {
-  flex: 0 0 auto;
-  height: clamp(54px, 9vh, 98px);
-  aspect-ratio: 1;
-  overflow: hidden;
-  background: var(--stage-panel);
-  border-radius: var(--r-sm);
-}
-
-.slot-gal img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.slot-gal .slot-ghost {
-  border-radius: var(--r-sm);
-  height: 100%;
-}
-
-.slot-text {
-  background: var(--stage-panel);
+  border-radius: 12px;
   border: 1px solid var(--stage-line);
-  padding: clamp(7px, 1.1vh, 12px) 13px;
+  display: block;
+}
+
+.frame-gallery {
+  flex: none;
   display: grid;
-  gap: 2px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 9px;
 }
 
-.slot-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--stage-faint);
-  text-transform: uppercase;
+.slot-gallery {
+  aspect-ratio: 1;
 }
 
-.slot-value {
-  font-size: clamp(13.5px, 1.6vh, 15px);
-  font-weight: 700;
-  color: var(--stage-text);
-  line-height: 1.4;
+.slot-gallery .slot-ghost {
+  border-radius: 10px;
 }
 
-.slot-value.price {
-  font-size: clamp(18px, 2.4vh, 22px);
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
+.slot-gallery .slot-fill img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--stage-line);
+  display: block;
 }
 
-.slot-value.crumb {
-  font-size: 13px;
-  font-weight: 600;
+/* --- 정보 칼럼 슬롯 --------------------------------------------------------- */
+
+.frame-info {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 1.9vh, 24px);
+  min-width: 0;
+}
+
+.ghost-bar {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--line-soft);
+}
+
+.slot-crumb .slot-ghost,
+.slot-title .slot-ghost,
+.slot-price .slot-ghost,
+.slot-tags .slot-ghost {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding: 0;
+}
+
+.slot-crumb {
+  min-height: 19px;
+}
+
+.frame-crumb-path {
+  margin: 0;
+  font-size: clamp(14px, 1.05vw, 16.5px);
   color: var(--stage-dim);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 7px;
 }
 
-.slot-value.crumb b {
-  color: var(--stage-text);
+.frame-crumb-path i {
+  font-style: normal;
+  color: var(--stage-faint);
+  margin-left: 6px;
+}
+
+/* 마지막 마디만 색을 갖는다 — 여기가 실제 매대다. */
+.frame-crumb-leaf {
   font-weight: 700;
+  color: var(--shelf-ink);
+  background: var(--shelf-soft);
+  border-radius: 7px;
+  padding: 2px 9px;
 }
 
-/* 상품명 2단 착지 — 이 화면의 유일한 교체 연출 */
-.title-provisional {
+.frame-crumb-hold {
+  font-style: normal;
+  margin-left: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--stage-amber);
+  border: 1px solid rgba(247, 144, 9, 0.45);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.slot-title {
+  min-height: 58px;
+}
+
+/* 상품명은 이 칸의 주인공이다 — 검색 결과에서 사람이 실제로 읽는 한 줄. */
+.slot-title h3 {
+  margin: 0;
+  font-size: clamp(1.5rem, 2.05vw, 2.6rem);
+  line-height: 1.32;
+  letter-spacing: -0.025em;
+  font-weight: 800;
+  color: var(--blue-deep);
+}
+
+.frame-title-final {
+  animation: title-land 420ms cubic-bezier(0.24, 0.8, 0.28, 1) both;
+}
+
+@keyframes title-land {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/*
+  상품군은 상품명이 앉은 **뒤에** 아래에서 뿅 뜬다. 이름보다 먼저 나오면 관객이 그걸
+  완성된 상품명으로 읽고, 나중에 진짜 이름이 그 자리를 빼앗는 번복처럼 보인다.
+  근거이지 제목이 아니므로 크기·무게 모두 한 단 아래로 둔다.
+*/
+.frame-title-kind {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-}
-
-.title-provisional u {
-  text-decoration: none;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--stage-amber);
-  border: 1px solid rgba(255, 180, 84, 0.4);
-  border-radius: 5px;
-  padding: 1px 6px;
-}
-
-.title-note {
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--stage-faint);
-  font-weight: 500;
-}
-
-.title-swap {
-  animation: slot-settle 460ms var(--ease-out) both;
-}
-
-.tag-row {
-  display: flex;
   gap: 6px;
-  flex-wrap: wrap;
-}
-
-.tag-row span {
-  font-size: 11.5px;
+  margin-top: 8px;
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--muted);
+  background: var(--paper-soft);
+  border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 3px 9px;
-  background: rgba(122, 156, 255, 0.14);
-  color: var(--search-blue);
-  animation: slot-settle 340ms var(--ease-out) both;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  padding: 3px 11px 3px 8px;
+  animation: kind-pop 320ms cubic-bezier(0.2, 0.9, 0.28, 1) 420ms both;
 }
 
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
-  gap: 6px;
-}
-
-.meta-cell {
-  border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.03);
-  padding: 5px 9px;
-  display: grid;
-  gap: 0;
-}
-
-.meta-cell b {
-  font-size: 10px;
+.frame-title-kind i {
+  font-style: normal;
+  font-size: 10.5px;
   font-weight: 700;
-  color: var(--stage-faint);
-}
-
-.meta-cell span {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--stage-text);
-}
-
-/* 상세 */
-.frame-detail {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  border-top: 1px solid var(--stage-line);
-  padding-top: 10px;
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.detail-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.detail-head b {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--stage-faint);
-  text-transform: uppercase;
-}
-
-.detail-concept {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--stage-text);
-  min-width: 0;
-}
-
-.detail-angle {
-  font-size: 12px;
-  color: var(--stage-dim);
-  font-weight: 500;
-}
-
-.panel-row {
-  display: flex;
-  gap: 6px;
-  min-width: 0;
-}
-
-.panel-slot {
-  flex: 0 0 auto;
-  height: clamp(64px, 10vh, 122px);
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--stage-panel);
-}
-
-.panel-slot img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.panel-slot .slot-ghost {
-  border-radius: 8px;
-  height: 100%;
-  padding: 6px;
-}
-
-.panel-slot .slot-ghost b {
-  font-size: 10px;
-}
-
-/* 등록필 도장 — 실제로 스토어에 올라갔을 때만 */
-.frame-stamp {
-  position: absolute;
-  top: 46%;
-  left: 50%;
-  z-index: 4;
-  transform: translate(-50%, -50%) rotate(-9deg);
-  border: 3px solid var(--stage-green);
-  color: var(--stage-green);
-  border-radius: 14px;
-  padding: 12px 26px;
-  font-size: clamp(20px, 2.4vw, 34px);
-  font-weight: 800;
   letter-spacing: 0.02em;
-  background: rgba(14, 15, 18, 0.72);
-  backdrop-filter: blur(2px);
-  animation: stamp-land 620ms var(--ease-out) both;
-  pointer-events: none;
-  display: grid;
-  justify-items: center;
+  color: var(--faint);
+}
+
+@keyframes kind-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.slot-price {
+  min-height: 50px;
+}
+
+.frame-price-block {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
 }
 
-.frame-stamp u {
-  text-decoration: none;
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  font-weight: 700;
-  opacity: 0.8;
+/*
+  할인 연출 — 판매가 칸 안에서 한 박자로 끝낸다.
+
+    ① 큰 자리의 숫자가 정가(17,700원)로 바뀐다
+    ② 빗금이 좌→우로 그어진다
+    ③ 정가가 축소되며 스윽 위로 올라가 작은 줄에 앉는다
+    ④ 비워진 그 자리에 할인가가 쾅
+
+  ⚠ ①에서 **자리·크기·굵기가 하나도 바뀌면 안 된다**. 앞서 다른 폰트·다른 위치로 겹쳐
+  띄웠더니 숫자가 순간이동한 것처럼 보였다. 그래서 정가 줄은 큰 가격과 **완전히 같은
+  타이포**로 만들어 그 위에 절대배치로 정확히 포개고, ③에서 축소·이동만 시킨다.
+  큰 가격(.frame-price)은 처음부터 끝까지 같은 자리에 있고 내용만 바뀐다.
+*/
+/*
+  정가가 올라와 앉을 자리는 **처음부터** 비워 둔다 (위 칸의 상품군 뱃지를 침범하지 않게).
+  ⚠ 할인 데이터가 올 때 padding 을 트랜지션으로 여는 방식은 두 가지가 나쁘다:
+  300ms 동안 리플로가 돌아 다른 리빌 애니메이션과 겹치고, 그 27px 이동 자체가 보인다.
+  할인이 없는 런에서는 이 자리가 여백으로 남을 뿐이다 — 그게 훨씬 싸다.
+*/
+.frame-price-block {
+  position: relative;
+  padding-top: 27px;
+  /* ⚠ 가격 타이포는 여기 한 곳에서만 정한다. 정가 줄이 큰 가격 위에 정확히 포개져야
+     하는데, 둘이 각자 값을 가지면 반응형 규칙 하나만 어긋나도 숫자가 튄다. */
+  --price-size: clamp(2rem, 2.6vw, 3.1rem);
 }
 
-/* ── 리빌 디렉터 ─────────────────────────────────────────────── */
-
-/* ⚠ 틀 자체에 opacity 를 걸지 않는다 — 스태킹 컨텍스트가 생겨
-   안쪽 착지점을 다시 밝힐 수 없다. 어둠은 이 레이어에서만. */
-.reveal-scrim {
+.frame-list-price {
   position: absolute;
-  inset: 0;
-  z-index: 5;
-  background: rgba(14, 15, 18, 0.3);
-  pointer-events: none;
-  animation: fade-in 220ms var(--ease-out) both;
+  left: 0;
+  top: 0;
+  margin: 0;
+  /* 큰 가격과 같은 타이포 — 여기가 어긋나면 숫자가 튄다. */
+  font-size: var(--price-size);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--stage-text);
+  white-space: nowrap;
+  transform-origin: left top;
+  animation: list-price-beat 1180ms cubic-bezier(0.32, 0.82, 0.3, 1) both;
 }
 
-.reveal-card {
-  position: fixed;
-  z-index: 6;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--stage-line);
-  background: var(--stage-raised);
-  padding: 20px 24px;
-  display: grid;
-  gap: 8px;
-  max-width: min(560px, 84vw);
-  pointer-events: none;
-  will-change: transform, opacity;
+@keyframes list-price-beat {
+  0%,
+  52% {
+    color: var(--stage-text);
+    /* 예약해 둔 여백만큼 내려와 큰 가격 위에 정확히 포갠다. */
+    transform: translateY(27px);
+  }
+  100% {
+    color: var(--stage-faint);
+    transform: translateY(0) scale(0.4);
+  }
 }
 
-.reveal-top {
+.frame-list-price::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 52%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--sale);
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: strike-through 280ms cubic-bezier(0.4, 0, 0.2, 1) 300ms forwards;
+}
+
+@keyframes strike-through {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* ④ 쾅 — 정가가 비켜난 자리에 꽂힌다. 살짝 넘겼다가 눌러 앉는다. */
+.frame-price.is-sale {
+  color: var(--sale);
+  transform-origin: left center;
+  animation: sale-slam 380ms cubic-bezier(0.2, 0.9, 0.28, 1) 1120ms both;
+}
+
+@keyframes sale-slam {
+  0% {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+  58% {
+    opacity: 1;
+    transform: scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.frame-rate {
+  display: inline-block;
+  color: var(--sale);
+  font-weight: 800;
+  margin-right: 8px;
+}
+
+.frame-price {
+  margin: 0;
+  font-size: var(--price-size);
+  font-weight: 800;
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 7px;
   flex-wrap: wrap;
 }
 
-.reveal-kicker {
-  font-size: 11px;
+.frame-price em {
+  font-style: normal;
+  font-size: 0.7em;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--stage-amber);
-  text-transform: uppercase;
+  margin-left: -4px;
 }
 
-.reveal-dest {
-  margin-left: auto;
-  font-size: 11px;
-  font-weight: 700;
+.frame-price-basis {
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--stage-faint);
-  border: 1px solid var(--stage-line);
+}
+
+.slot-tags {
+  min-height: 30px;
+}
+
+/* 정보 칼럼의 유령 라벨은 전부 왼쪽 정렬이다 — 하나만 가운데면 줄이 어긋나 보인다. */
+.slot-tags .slot-ghost {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.ghost-chip {
+  display: inline-block;
+  width: 62px;
+  height: 20px;
   border-radius: 999px;
-  padding: 3px 9px;
+  background: var(--line-soft);
+}
+
+.frame-tags {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.frame-tags span {
+  font-size: clamp(13px, 0.95vw, 15px);
+  font-weight: 600;
+  color: var(--blue-deep);
+  background: var(--blue-soft);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+
+.frame-tags .is-more {
+  color: var(--stage-dim);
+  background: var(--stage-panel-strong);
+}
+
+.frame-meta {
+  list-style: none;
+  margin: auto 0 0;
+  padding: 13px 0 0;
+  border-top: 1px solid var(--stage-line);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 20px;
+}
+
+.frame-meta li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--stage-faint);
+  min-width: 0;
+}
+
+/* 원산지·KC·고시가 왜 거기 있는지 모르면 그냥 알 수 없는 약어 네 개다. */
+.frame-meta-head {
+  grid-column: 1 / -1;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--stage-dim);
+}
+
+.frame-meta-head em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--stage-faint);
+}
+
+.frame-meta li strong {
+  font-weight: 600;
+  color: var(--stage-dim);
+  flex: none;
+}
+
+.frame-meta-dot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--stage-green);
+  transition: border-color 240ms ease, background-color 240ms ease;
+}
+
+.frame-meta li.is-on {
+  color: var(--stage-dim);
+}
+
+.frame-meta li.is-on .frame-meta-dot {
+  border-color: transparent;
+  background: rgba(23, 178, 106, 0.18);
+}
+
+.frame-meta-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.detail-count {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--stage-dim);
+/* 필수 표시 항목은 넓은 2열 그리드다 — 큰 스케일로 시작하면 칼럼을 넘어 잘린다. */
+.frame-meta.is-filled {
+  animation: meta-arrive 260ms cubic-bezier(0.16, 0.9, 0.28, 1) both;
 }
 
-.slot-detail-head .detail-head {
-  width: 100%;
+@keyframes meta-arrive {
+  0% {
+    opacity: 0.2;
+    transform: scale(1.05);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(0.985);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
-.reveal-content {
-  font-size: clamp(17px, 1.5vw, 23px);
-  font-weight: 800;
-  line-height: 1.3;
-  letter-spacing: -0.02em;
-  color: var(--stage-text);
-}
+/* --- 상세페이지 스트립 ------------------------------------------------------- */
 
-.reveal-detail {
-  font-size: 13px;
-  color: var(--stage-dim);
-  font-weight: 500;
-}
-
-/* why 가 가장 크게 — 전문 용어 금지 */
-.reveal-why {
-  font-size: clamp(15px, 1.3vw, 19px);
-  font-weight: 700;
-  line-height: 1.45;
-  color: #fff;
-  border-top: 1px solid var(--stage-line);
-  padding-top: 10px;
-}
-
-.reveal-tech {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--stage-faint);
-}
-
-.reveal-media {
-  border-radius: var(--r-md);
-  overflow: hidden;
-  max-height: 42vh;
-}
-
-.reveal-media img {
-  width: 100%;
-  height: auto;
-}
-
-/* ── 중단 오버레이 ───────────────────────────────────────────── */
-
-.halt {
-  position: absolute;
-  inset: 0;
-  z-index: 8;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(8, 9, 12, 0.62);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  animation: fade-in 320ms var(--ease-out) both;
-}
-
-.halt-card {
-  max-width: 620px;
-  border-radius: var(--r-lg);
-  border: 1px solid var(--stage-line);
-  background: var(--stage-raised);
-  padding: 28px 30px;
-  display: grid;
-  gap: 12px;
-  animation: rise-in 460ms var(--ease-out) 80ms both;
-}
-
-.halt-card h2 {
-  font-size: clamp(1.5rem, 2.2vw, 2rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-}
-
-.halt-card > p {
-  color: var(--stage-dim);
-  font-size: 14.5px;
-  font-weight: 500;
-}
-
-.halt-reasons {
-  display: grid;
-  gap: 6px;
-  border-radius: 14px;
-  border: 1px solid var(--stage-line);
-  padding: 13px 15px;
-}
-
-.halt-reasons li {
-  font-size: 13.5px;
-  color: var(--stage-text);
-  font-weight: 500;
-  display: flex;
-  gap: 8px;
-}
-
-.halt-reasons li::before {
-  content: "·";
-  color: var(--stage-amber);
-  font-weight: 800;
-}
-
-/* ── 발사 전환 ───────────────────────────────────────────────── */
-
-.launch {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  pointer-events: none;
-  background: rgba(10, 11, 14, 0);
-  transition: background 420ms var(--ease-out);
-}
-
-.launch.veiled {
-  background: rgba(10, 11, 14, 0.86);
-}
-
-.launch.out {
-  background: rgba(10, 11, 14, 0);
-}
-
-/* 화질 규칙: 클론은 최대(중앙) 크기로 레이아웃하고 transform 은 축소 방향만. */
-.launch-clone {
-  position: fixed;
-  top: 0;
-  left: 0;
-  border-radius: var(--r-md);
-  overflow: hidden;
-  will-change: transform, opacity;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
-}
-
-.launch-clone img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-/* ── 결과 화면 ───────────────────────────────────────────────── */
-
-.rs {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: clamp(24px, 5vh, 48px) clamp(20px, 4vw, 48px) 72px;
-}
-
-.rs-head {
-  display: grid;
-  gap: 8px;
-  margin-bottom: clamp(20px, 3vh, 30px);
-}
-
-.rs-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--green-deep);
-  animation: rise-in 460ms var(--ease-out) both;
-}
-
-.rs-badge.hold {
-  color: var(--amber-deep);
-}
-
-.rs-badge i {
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--green-soft);
-  display: grid;
-  place-items: center;
-  color: var(--green-deep);
-}
-
-.rs-badge.hold i {
-  background: var(--amber-soft);
-  color: var(--amber-deep);
-}
-
-.rs-head h1 {
-  font-size: clamp(1.6rem, 2.2vw, 2.2rem);
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  line-height: 1.25;
-  animation: rise-in 460ms var(--ease-out) 60ms both;
-}
-
-.rs-facts {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  align-items: center;
-  font-size: 14.5px;
-  color: var(--muted);
-  font-weight: 600;
-  animation: rise-in 460ms var(--ease-out) 110ms both;
-}
-
-.rs-facts b {
-  color: var(--ink);
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
-.rs-hold {
-  border-radius: 14px;
-  border: 1px solid var(--amber-soft);
-  background: rgba(247, 144, 9, 0.06);
-  padding: 14px 16px;
-  display: grid;
-  gap: 5px;
-  animation: rise-in 460ms var(--ease-out) 140ms both;
-}
-
-.rs-hold b {
-  font-size: 13.5px;
-  color: var(--amber-deep);
-  font-weight: 800;
-}
-
-.rs-hold li {
-  font-size: 13px;
-  color: var(--ink-soft);
-  display: flex;
-  gap: 7px;
-  font-weight: 500;
-}
-
-.rs-hold li::before {
-  content: "·";
-  color: var(--amber);
-  font-weight: 800;
-}
-
-/* 완성 보드 */
-.rs-board {
-  border-radius: 20px;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  box-shadow: var(--shadow-card);
-  padding: clamp(16px, 2.6vw, 26px);
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  gap: clamp(14px, 2.4vw, 26px);
-  align-items: center;
-  margin-bottom: clamp(20px, 3vh, 30px);
-  animation: rise-in 520ms var(--ease-out) 160ms both;
-}
-
-.rs-before {
-  display: grid;
-  gap: 7px;
-  justify-items: center;
-}
-
-.rs-before img {
-  width: clamp(84px, 11vw, 120px);
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: var(--r-md);
-  border: 3px solid var(--paper);
-  box-shadow: var(--shadow-card);
-}
-
-.rs-arrow {
-  color: var(--faint);
-  display: grid;
-  place-items: center;
-}
-
-.rs-after {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: clamp(12px, 1.8vw, 20px);
-  align-items: center;
+.frame-detail {
   min-width: 0;
-}
-
-.rs-main {
-  display: grid;
-  gap: 7px;
-  justify-items: center;
-}
-
-.rs-main img {
-  width: clamp(140px, 20vw, 230px);
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 20px;
-  border: 1px solid var(--line);
-}
-
-.rs-cuts {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-}
-
-.rs-cut-row {
+  min-height: 0;
   display: flex;
-  gap: 7px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  border-left: 1px solid var(--stage-line);
+  padding-left: clamp(18px, 2vw, 32px);
 }
 
-.rs-cut-row img {
-  width: 58px;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  transition: transform 220ms var(--ease-out);
-}
-
-.rs-cut-row.panels img {
-  width: 40px;
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
-}
-
-.rs-cut-row img:hover {
-  transform: translateY(-3px);
-}
-
-.rs-cap {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--faint);
-  text-align: center;
-}
-
-.rs-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: clamp(24px, 4vh, 40px);
-}
-
-.rs-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 14px;
-}
-
-.rs-cell {
-  border-radius: 20px;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  padding: 18px 20px;
-  display: grid;
-  gap: 10px;
-  align-content: start;
-  animation: rise-in 460ms var(--ease-out) both;
-  animation-delay: calc(var(--i, 0) * 70ms);
-}
-
-.rs-cell h3 {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--faint);
-  text-transform: uppercase;
-}
-
-.rs-quote {
-  font-size: 16.5px;
-  font-weight: 700;
-  line-height: 1.45;
-  color: var(--ink);
-  letter-spacing: -0.01em;
-}
-
-.rs-sub {
-  font-size: 13.5px;
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.rs-roles {
-  display: grid;
-  gap: 5px;
-}
-
-.rs-role {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--ink-soft);
-  font-weight: 600;
-  min-width: 0;
-}
-
-.rs-role u {
-  text-decoration: none;
-  flex: 0 0 auto;
-  font-size: 10.5px;
-  font-weight: 700;
-  border-radius: 6px;
-  padding: 2px 7px;
-  background: var(--line-soft);
-  color: var(--muted);
-}
-
-.rs-role i {
-  flex: 0 0 auto;
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--line);
-  margin-left: auto;
-}
-
-.rs-role i.on {
-  background: var(--blue);
-}
-
-.rs-kv {
-  display: grid;
-  gap: 7px;
-}
-
-.rs-kv div {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  font-size: 13.5px;
-  min-width: 0;
-}
-
-.rs-kv b {
-  flex: 0 0 84px;
-  color: var(--faint);
-  font-weight: 600;
-  font-size: 12.5px;
-}
-
-.rs-kv span {
-  color: var(--ink-soft);
-  font-weight: 600;
-  min-width: 0;
-}
-
-.rs-note {
-  font-size: 12.5px;
-  color: var(--faint);
-  font-weight: 500;
-}
-
-/* 모달 */
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: grid;
-  place-items: center;
-  padding: clamp(12px, 3vw, 36px);
-  background: rgba(15, 20, 28, 0.5);
-  animation: fade-in 200ms var(--ease-out) both;
-}
-
-.modal-frame {
-  width: min(880px, 100%);
-  height: min(84vh, 100%);
-  border-radius: 20px;
-  overflow: hidden;
-  background: var(--paper);
-  display: grid;
-  grid-template-rows: auto 1fr;
-  box-shadow: var(--shadow-pop);
-  animation: rise-in 320ms var(--ease-out) both;
-}
-
-.modal-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-  font-size: 13.5px;
-  font-weight: 700;
-}
-
-.modal-frame iframe {
-  width: 100%;
-  height: 100%;
-  border: 0;
-}
-
-/* ── 목록 ────────────────────────────────────────────────────── */
-
-.list {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: clamp(24px, 4vh, 40px) clamp(20px, 4vw, 48px) 72px;
-}
-
-.list-head {
+.frame-detail-head {
   display: flex;
   align-items: baseline;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 10px;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
-.list-head h1 {
-  font-size: clamp(1.6rem, 2.2vw, 2.2rem);
-  font-weight: 800;
-  letter-spacing: -0.02em;
+.frame-detail-head strong {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--stage-dim);
+  flex: none;
 }
 
-.list-head span {
-  font-size: 13.5px;
-  color: var(--faint);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.list-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
-  gap: 14px;
-}
-
-.list-card {
-  border-radius: 18px;
-  border: 1px solid var(--line);
-  background: var(--paper);
-  overflow: hidden;
-  text-align: left;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  transition:
-    transform 260ms var(--ease-out),
-    box-shadow 260ms var(--ease-out),
-    border-color 200ms ease;
-  animation: rise-in 420ms var(--ease-out) both;
-  animation-delay: calc(var(--i, 0) * 45ms);
-}
-
-.list-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-pop);
-  border-color: transparent;
-}
-
-.list-thumb {
-  aspect-ratio: 4 / 3;
-  background: var(--line-soft);
-  overflow: hidden;
-}
-
-.list-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 420ms var(--ease-out);
-}
-
-.list-card:hover .list-thumb img {
-  transform: scale(1.03);
-}
-
-.list-meta {
-  padding: 13px 15px 15px;
-  display: grid;
-  gap: 6px;
-  align-content: start;
-}
-
-.list-title {
-  font-size: 14.5px;
+/* 컨셉은 이 칼럼의 제목이다 — 한 줄로 잘라 버리면 기획의 목소리가 사라진다. */
+.frame-concept {
+  font-size: clamp(14px, 1.05vw, 17px);
   font-weight: 700;
   line-height: 1.45;
-  color: var(--ink);
+  color: var(--stage-text);
+  min-width: 0;
+  flex: 1 1 100%;
   display: -webkit-box;
   -webkit-line-clamp: 2;
-  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.list-row {
+.frame-detail-head.is-filled .frame-concept {
+  animation: rise-in 360ms var(--ease-out) both;
+}
+
+.frame-detail-wait {
+  font-size: 13.5px;
+  color: var(--stage-faint);
+}
+
+/* 기획이 실패로 끝난 칸 — 기다림이 아니라 판정이므로 색으로 구분한다. */
+.frame-detail-wait.is-failed {
+  color: var(--stage-amber);
+}
+
+.frame-detail-count {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--stage-faint);
+}
+
+/* 6컷을 3×2 로 세운다 — 한 줄로 늘어놓으면 세로 2:3 패널이 손톱만 해져
+   무엇이 그려졌는지 안 보인다. */
+.frame-panels {
+  margin-top: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* 두 줄이 **반드시** 칼럼 안에 들어오게 행을 1fr 로 나눈다 — 폭으로만 크기를 잡으면
+     낮은 화면(1280x720 프로젝터)에서 둘째 줄이 틀 밖으로 잘린다. */
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.slot-panel {
+  min-height: 0;
+  /* 높이가 정하고 폭이 따라오되, 칸보다 넓어지면 폭에서 잘린다 (비율 오차 5% 이내). */
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 2 / 3;
+  justify-self: center;
+}
+
+.slot-panel .slot-ghost {
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.slot-panel .slot-fill img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--stage-line);
+  display: block;
+}
+
+.ghost-panel-num {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* --- 틀 상태 연출 — 검증 스윕 · 등록 펄스 · 완료 스탬프 ----------------------- */
+
+/* 검증 스윕 — 훑는 게 보이기만 하면 된다. 빠르고 진하면 화면이 번쩍거린다. */
+.frame.is-validating::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 9%;
+  background: rgba(49, 96, 240, 0.05);
+  border-bottom: 1.5px solid rgba(49, 96, 240, 0.4);
+  animation: frame-sweep 2.6s var(--ease-out) infinite;
+  pointer-events: none;
+}
+
+@keyframes frame-sweep {
+  to {
+    top: 91%;
+  }
+}
+
+.frame.is-publishing .frame-url {
+  color: var(--stage-text);
+  border-color: rgba(49, 96, 240, 0.6);
+  animation: url-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes url-pulse {
+  50% {
+    border-color: rgba(49, 96, 240, 0.14);
+  }
+}
+
+.frame.is-complete {
+  border-color: rgba(23, 178, 106, 0.45);
+  animation: frame-settle 320ms var(--ease-out) 240ms;
+}
+
+@keyframes frame-settle {
+  0% {
+    transform: none;
+  }
+  35% {
+    transform: translateY(3px);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+.frame.is-complete .slot-ghost {
+  opacity: 0.35;
+  animation: none;
+}
+
+/* 등록필 도장 — 완료의 한 방. 정보 칼럼의 여백(태그 아래)에 찍힌다. */
+.frame-stamp {
+  position: absolute;
+  right: clamp(16px, 2.2vw, 28px);
+  top: 40%;
+  width: 92px;
+  height: 92px;
+  border-radius: 999px;
+  border: 3.5px solid var(--stage-red);
+  color: var(--stage-red);
+  display: grid;
+  place-content: center;
+  text-align: center;
+  row-gap: 2px;
+  background: rgba(255, 255, 255, 0.82);
+  transform: rotate(-10deg);
+  animation: stamp-in 460ms var(--ease-out) both;
+}
+
+.frame-stamp span {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.frame-stamp em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+@keyframes stamp-in {
+  0% {
+    opacity: 0;
+    transform: rotate(-10deg) scale(1.7);
+  }
+  55% {
+    opacity: 1;
+    transform: rotate(-10deg) scale(0.96);
+  }
+  75% {
+    transform: rotate(-10deg) scale(1.05);
+  }
+  100% {
+    transform: rotate(-10deg) scale(1);
+  }
+}
+
+/* --- 리빌 오버레이 — 산출물의 확대 등장 → 슬롯 장착 --------------------------- */
+
+/*
+  ⚠ 딤은 **한 장이 계속 떠 있는다**. 카드마다 레이어를 새로 띄우면 카드 사이마다
+  꺼졌다 켜지며 화면이 깜빡인다(스트로브) — 실제로 "반짝여서 보기 힘들다"는 지적을 받았다.
+  그래서 딤은 무대(.assembly)에 붙이고, 나가는 쪽에만 지연을 줘 카드 교체 틈(1프레임)을
+  통째로 삼킨다.
+*/
+.assembly::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background: rgba(25, 31, 40, 0.12);
+  opacity: 0;
+  transition: opacity 260ms ease 140ms;
+}
+
+.assembly.is-revealing::before {
+  opacity: 1;
+  transition: opacity 200ms ease 0ms;
+}
+
+.reveal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.reveal-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  will-change: transform, opacity;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  padding: clamp(22px, 3vh, 34px) clamp(28px, 3.4vw, 52px);
+  max-width: min(640px, 88%);
+  animation: reveal-enter 380ms var(--ease-out) both;
+}
+
+.reveal-card.is-quick {
+  animation-duration: 220ms;
+}
+
+/* 사진은 액자 없이 사진만 — 그림자만으로 떠 있게 한다. */
+.reveal-card.is-photo {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+  max-width: none;
+  gap: 0;
+}
+
+.reveal-card.is-photo .reveal-img img {
+  box-shadow: var(--shadow-pop);
+}
+
+@keyframes reveal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+
+/* 무엇이 만들어졌는가 — 카드의 제목. */
+.reveal-kicker {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--stage-text);
+}
+
+/* 어디로 들어가는가 — 슬롯 사전 점등과 짝을 이루는 한 마디. 도착 전에 읽혀야
+   "저게 저기 꽂히는구나"가 성립한다. */
+.reveal-dest {
+  margin: -8px 0 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--blue-deep);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.reveal-dest span {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/*
+  크기는 **figure** 가 갖는다 — 가로세로비는 목적지 칸에서 받아 인라인으로 덮어쓰므로
+  (Assembly 의 slotRatio), 여기서는 높이만 정한다. 비율이 칸과 같아야 착지 배율이
+  가로·세로 모두 정확히 일치해 크기가 딱 맞는다.
+  모서리 반경도 칸의 사진과 같은 12px 로 맞춘다 — 다르면 인수인계 순간에 테가 튄다.
+*/
+.reveal-img {
+  margin: 0;
+  height: min(46vh, 460px);
+  aspect-ratio: 1;
+  max-width: 86vw;
+}
+
+.reveal-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+}
+
+.reveal-img.is-portrait {
+  height: min(30vh, 280px);
+  aspect-ratio: 2 / 3;
+}
+
+.reveal-big {
+  margin: 0;
+  font-size: clamp(1.5rem, 2.4vw, 2.4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+  max-width: 22em;
+}
+
+.reveal-title {
+  font-size: clamp(1.15rem, 1.5vw, 1.6rem);
+}
+
+/*
+  상품명 재작성 — 이 무대에서 유일하게 "고쳐 쓰는" 산출물이다. 전/후를 한 카드에
+  같이 세워야 무엇이 어떻게 나아졌는지가 한눈에 읽힌다.
+*/
+.reveal-rewrite {
+  display: grid;
+  gap: 12px;
+  text-align: left;
+  max-width: 30em;
+}
+
+.reveal-rewrite p {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.reveal-rewrite-tag {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--stage-faint);
+  border: 1px solid var(--stage-line);
+  border-radius: 5px;
+  padding: 1px 7px;
+}
+
+.reveal-rewrite-tag.is-after {
+  color: var(--blue-deep);
+  border-color: rgba(49, 96, 240, 0.4);
+}
+
+.reveal-rewrite-from s {
+  font-size: 15px;
+  color: var(--stage-faint);
+  text-decoration-color: var(--line);
+}
+
+.reveal-rewrite-to strong {
+  font-size: clamp(1.15rem, 1.5vw, 1.6rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.4;
+}
+
+.reveal-crumb {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: clamp(1.5rem, 2.5vw, 2.5rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+}
+
+.reveal-crumb span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reveal-crumb i {
+  font-style: normal;
+  color: var(--stage-faint);
+  font-weight: 400;
+}
+
+.reveal-price {
+  margin: 0;
+  font-size: clamp(2.1rem, 3.4vw + 0.6rem, 4.6rem);
+  font-weight: 800;
+  letter-spacing: -0.032em;
+}
+
+
+/* --- 상세 패널 덱 — 쌓았다가 한 번에 흩뿌린다 --------------------------------- */
+
+/* 여기도 사진만이다 — 여섯 장이 쌓이는 것 자체가 설명이라 문구를 두르지 않는다. */
+/* ⚠ `.deck` 는 랜딩 유리판(App.tsx)이 선점한 이름이다 — 무대 쪽은 반드시 접두어를 단다. */
+.reveal-deck {
+  position: relative;
+  width: clamp(140px, 21vh, 205px);
+  aspect-ratio: 2 / 3;
+}
+
+.reveal-deck-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--paper);
+  box-shadow: var(--shadow-pop);
+  will-change: transform, opacity;
+}
+
+.reveal-deck-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.reveal-tags {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.reveal-tags span {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--blue-deep);
+  background: var(--blue-soft);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.reveal-tags .is-counted {
+  color: var(--stage-dim);
+  background: var(--stage-panel-strong);
+}
+
+.reveal-meta {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 22px;
+  text-align: left;
+}
+
+.reveal-meta li {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
+  font-size: 14px;
   font-weight: 600;
+}
+
+.reveal-meta li svg {
+  color: var(--stage-green);
+  flex: none;
+}
+
+.reveal-meta li strong {
+  color: var(--stage-dim);
+  font-weight: 600;
+}
+
+/*
+  왜 이게 등록에 필요한가 — 상품 등록을 해본 적 없는 관객이 읽는 줄. 무대의
+  전달력은 사실상 이 한 줄에 달려 있어서 근거(tech)보다 크고 밝게 둔다.
+*/
+.reveal-why {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--stage-dim);
+  max-width: 28em;
+}
+
+.reveal-tech {
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--stage-faint);
+  max-width: 32em;
+}
+
+/* 수치 갱신 표면 — 고정폭 숫자 룰. */
+.frame-price,
+.frame-detail-count,
+.reveal-price {
   font-variant-numeric: tabular-nums;
 }
 
-.list-row time {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--faint);
-  font-weight: 500;
-}
+/* --- 하단 7단계 스트립 ----------------------------------------------------------- */
 
-.empty {
-  border-radius: 20px;
-  border: 1.5px dashed var(--line);
-  padding: 48px 24px;
-  text-align: center;
-  display: grid;
-  gap: 8px;
-  justify-items: center;
-}
-
-.empty b {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.empty span {
-  font-size: 13.5px;
-  color: var(--faint);
-}
-
-/* ── 드로어 ──────────────────────────────────────────────────── */
-
-.drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  background: rgba(15, 20, 28, 0.5);
-  animation: fade-in 220ms var(--ease-out) both;
-}
-
-.drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 61;
-  width: min(520px, 100%);
-  background: var(--paper);
-  border-left: 1px solid var(--line);
-  display: grid;
-  grid-template-rows: auto 1fr;
-  animation: drawer-in 380ms var(--ease-out) both;
-}
-
-@keyframes drawer-in {
-  from {
-    transform: translate3d(28px, 0, 0);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
-}
-
-.drawer-bar {
+.stage-strip-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
+  gap: clamp(14px, 2vw, 26px);
+  min-width: 0;
 }
 
-.drawer-bar b {
-  font-size: 15px;
+.stage-strip ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ph {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--stage-dim);
+  border: 1px solid transparent;
+  transition: background-color 240ms ease, color 240ms ease;
+}
+
+.ph-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1.5px solid var(--stage-line);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.ph.is-done {
+  color: var(--stage-dim);
+  background: var(--paper);
+  border-color: var(--line);
+}
+
+.ph.is-done .ph-dot {
+  border-color: transparent;
+  background: rgba(23, 178, 106, 0.2);
+  color: var(--stage-green);
+}
+
+.ph.is-active {
+  background: var(--blue);
+  color: #fff;
+}
+
+.ph.is-active .ph-dot {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.ph.is-skipped {
+  opacity: 0.62;
+}
+
+.ph.is-skipped .ph-dot {
+  border-style: dashed;
+  color: var(--stage-faint);
+}
+
+/* 에이전트의 "판단해서 생략"을 대기와 구분해 읽히게 하는 마이크로라벨. */
+.ph-skip {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--stage-faint);
+  border: 1px solid var(--stage-line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  margin-left: 2px;
+}
+
+.ph.is-blocked {
+  background: rgba(240, 68, 56, 0.16);
+  color: var(--stage-red);
+}
+
+.ph.is-blocked .ph-dot {
+  border-color: transparent;
+  color: var(--stage-red);
+}
+
+.stage-progress {
+  margin-top: 12px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.stage-progress span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--blue);
+  border-radius: 999px;
+  transform-origin: left center;
+  transition: transform 700ms var(--ease-out), background-color 500ms ease;
+}
+
+/* 완료의 한 방 — 진행 룰이 그린으로 정착하고 헤드라인이 한 박자 커진다. */
+.stage.is-complete .stage-progress span {
+  background: var(--green);
+}
+
+.stage.is-complete .stage-lede h1 {
+  animation: complete-beat 640ms var(--ease-out) both;
+}
+
+@keyframes complete-beat {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(0) scale(1.015);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 수치는 전부 고정폭 숫자 — 시계·카운터·가격의 자릿수 정렬 (Toss 넘버 크래프트). */
+.stage-chip-mono,
+.rs-price,
+.rs-timings,
+.pricestrip-labels,
+.pricestrip-note {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 중단(검토 필요)·실패 오버레이 ------------------------------------------------- */
+
+.stage-halt {
+  position: absolute;
+  inset: 0;
+  background: rgba(247, 248, 250, 0.72);
+  backdrop-filter: blur(10px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: fade-in 240ms ease-out;
+}
+
+.stage-halt-card {
+  width: min(560px, 100%);
+  background: var(--stage-raised);
+  border: 1px solid var(--stage-line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  padding: clamp(24px, 4vw, 40px);
+  color: var(--stage-text);
+  animation: rise-in 360ms var(--ease-out);
+}
+
+.stage-halt-card svg {
+  color: var(--stage-amber);
+}
+
+.stage.is-halted .stage-halt-card h2 {
+  margin: 14px 0 0;
+  font-size: clamp(1.3rem, 2.2vw, 1.7rem);
+  letter-spacing: -0.02em;
+}
+
+.stage-halt-card p {
+  margin: 10px 0 0;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--stage-dim);
+}
+
+.stage-halt-card ul {
+  margin: 16px 0 0;
+  padding: 0 0 0 18px;
+  font-size: 14.5px;
+  line-height: 1.75;
+}
+
+.stage-halt-actions {
+  margin-top: 24px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   결과 쇼케이스 (라이트)
+   ============================================================ */
+
+/* 첫 화면에 완성 보드가 통째로 들어오도록 폭을 넓히고 위 여백을 줄였다 —
+   상세 컷 6장까지 알아볼 크기로 걸리는 하한이 대략 이 폭이다. */
+.rs {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: clamp(26px, 4.4vh, 48px) clamp(20px, 4vw, 48px) 96px;
+}
+
+.rs-rehearsal {
+  margin: 10px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--amber-deep);
+  background: var(--amber-soft);
+  border-radius: 999px;
+  display: inline-block;
+  padding: 6px 14px;
+}
+
+.rs-head {
+  text-align: center;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.rs-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--green-deep);
+  background: var(--green-soft);
+  border-radius: 999px;
+  padding: 7px 14px;
+}
+
+.rs-head h2 {
+  margin: 14px 0 0;
+  font-size: clamp(1.6rem, 2.6vw, 2.5rem);
+  line-height: 1.3;
+  letter-spacing: -0.025em;
   font-weight: 800;
 }
 
-.drawer-close {
-  margin-left: auto;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
+.rs-head-meta {
+  margin: 10px 0 0;
+  font-size: 17px;
   color: var(--muted);
-  transition: background 160ms ease;
 }
 
-.drawer-close:hover {
-  background: var(--paper-soft);
+.rs-head-meta strong {
+  color: var(--ink);
+  font-weight: 800;
 }
 
-.drawer-body {
-  overflow-y: auto;
-  padding: 20px;
+/* 실등록 보류 배지 — 완주는 했고 live 쓰기만 자동 강등됐음을 정직하게 알린다. */
+.rs-hold {
+  margin: 18px auto 0;
+  max-width: 560px;
+  text-align: left;
+  background: var(--amber-soft);
+  border-radius: 14px;
+  padding: 14px 18px;
+}
+
+.rs-hold strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--amber-deep);
+}
+
+.rs-hold ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+/*
+  완성 보드 — 올린 사진 한 장이 대표 이미지·추가 컷·상세 컷으로 불어난 결과를
+  한 덩어리로 세운다. 대표 이미지 하나만 크게 걸면 나머지 산출물이 스크롤 아래로
+  숨어서 "이만큼을 만들었다"가 전달되지 않는다 (첫 화면 기준으로 짠 배치).
+*/
+.rs-board {
+  margin-top: clamp(24px, 4vh, 40px);
   display: grid;
-  gap: 18px;
-  align-content: start;
-}
-
-.dsec {
-  display: grid;
-  gap: 9px;
-}
-
-.dsec > h3 {
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--faint);
-  text-transform: uppercase;
-}
-
-.dfact {
-  display: grid;
-  gap: 4px;
-  border-radius: 12px;
-  background: var(--paper-soft);
-  padding: 10px 12px;
-}
-
-.dfact-top {
-  display: flex;
-  gap: 8px;
+  grid-template-columns: clamp(120px, 13vw, 168px) 34px minmax(0, 1fr);
+  gap: clamp(14px, 1.8vw, 24px);
   align-items: center;
 }
 
-.dfact-claim {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--ink-soft);
-  line-height: 1.55;
+.rs-src {
+  margin: 0;
+  animation: rs-in 520ms var(--ease-out) both;
 }
 
-.dfact-src {
-  font-size: 11.5px;
-  color: var(--faint);
+.rs-src img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--r-md);
+  border: 1px solid var(--line);
+  display: block;
 }
 
-.dsec details summary {
-  cursor: pointer;
+.rs-src figcaption,
+.rs-hero figcaption,
+.rs-shots figcaption,
+.rs-panels figcaption {
+  margin-top: 9px;
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
+  color: var(--faint);
+  text-align: center;
+}
+
+.rs-flow {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--paper-soft);
   color: var(--muted);
-  list-style: none;
+  justify-self: center;
+  animation: rs-in 520ms var(--ease-out) 120ms both;
 }
 
-.dsec details summary::-webkit-details-marker {
-  display: none;
+.rs-made {
+  display: grid;
+  grid-template-columns: minmax(0, 0.44fr) minmax(0, 0.56fr);
+  gap: clamp(14px, 1.8vw, 24px);
+  align-items: center;
+  min-width: 0;
 }
 
-.dlog {
-  margin-top: 8px;
-  border-radius: var(--r-sm);
-  background: #0c0f15;
-  color: #d7dce2;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.6;
-  padding: 12px;
-  max-height: 260px;
-  overflow: auto;
+.rs-hero {
+  margin: 0;
+  animation: rs-in 560ms var(--ease-out) 180ms both;
 }
 
-.dlog div {
+.rs-hero img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+  display: block;
+}
+
+.rs-made-rest {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(12px, 1.6vh, 20px);
+  min-width: 0;
+}
+
+.rs-shots,
+.rs-panels {
+  margin: 0;
+  min-width: 0;
+}
+
+/* 컷 수는 런마다 다르다 — 고정 3열이면 2장일 때 오른쪽이 뻥 빈다. */
+.rs-shots-row {
+  display: flex;
+  gap: 10px;
+}
+
+.rs-shots-row img {
+  flex: 1 1 0;
+  min-width: 0;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  display: block;
+  animation: rs-in 480ms var(--ease-out) both;
+}
+
+/* 상세 컷은 세로 2:3 — 정사각으로 잘라 걸면 상세페이지로 안 읽힌다. */
+.rs-panels-row {
   display: flex;
   gap: 8px;
 }
 
-.dlog b {
-  flex: 0 0 82px;
+.rs-panels-row img {
+  flex: 1 1 0;
+  min-width: 0;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  display: block;
+  animation: rs-in 480ms var(--ease-out) both;
+}
+
+@keyframes rs-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+/* 첫 화면 밑에 등록 내역이 더 있다는 표시 — 헤어라인 위에 얹힌 한 마디. */
+.rs-more {
+  margin: clamp(30px, 5vh, 52px) 0 0;
+  padding-top: clamp(20px, 3vh, 30px);
+  border-top: 1px solid var(--line);
+  font-size: 13px;
   font-weight: 700;
+  color: var(--faint);
+  text-align: center;
 }
 
-.dlog .tool_call {
-  color: #ffb454;
-}
-.dlog .tool_result {
-  color: #2bd07e;
-}
-.dlog .milestone {
-  color: #4fc3dd;
-}
-.dlog .model_event {
-  color: #6e9bff;
-}
-.dlog .status {
-  color: #8d95a5;
-}
-.dlog .image {
-  color: #d78cff;
-}
-.dlog .error {
-  color: #ff5c4d;
+.rs-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
 }
 
+.rs-cell {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: var(--shadow-card);
+  padding: 24px;
+  min-width: 0;
+}
+
+.rs-cell h3 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.rs-plan {
+  grid-column: 1 / -1;
+}
+
+.rs-concept {
+  margin: 0;
+  font-size: clamp(1.3rem, 2vw, 1.7rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.45;
+}
+
+.rs-angle {
+  margin: 8px 0 0;
+  font-size: 14.5px;
+  color: var(--muted);
+}
+
+.rs-sections {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+}
+
+.rs-sections li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  min-width: 0;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.rs-sections li span:last-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-role {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue-deep);
+  background: var(--blue-soft);
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+.rs-panel-dot {
+  flex: none;
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.rs-inline-btn {
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 0;
+  margin-left: 10px;
+}
+
+.rs-cell-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--faint);
+  line-height: 1.6;
+}
+
+.rs-price {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.rs-breadcrumb {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.rs-breadcrumb i {
+  font-style: normal;
+  color: var(--faint);
+  margin: 0 3px;
+}
+
+.rs-tags {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rs-tags span {
+  font-size: 13px;
+  color: var(--blue-deep);
+  background: var(--blue-soft);
+  border-radius: 999px;
+  padding: 5px 11px;
+}
+
+.rs-tags span.is-unofficial {
+  color: var(--muted);
+  background: var(--paper-soft);
+}
+
+.rs-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  line-height: 2;
+  color: var(--ink-soft);
+}
+
+.rs-timings {
+  margin: 12px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.rs-actions {
+  margin-top: clamp(22px, 3.4vh, 34px);
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  animation: rs-in 520ms var(--ease-out) 320ms both;
+}
+
+/* --- 시세 스트립 ------------------------------------------------------------------ */
+
+.pricestrip {
+  margin-top: 16px;
+}
+
+.pricestrip-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-soft);
+}
+
+.pricestrip-iqr {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: rgba(49, 96, 240, 0.2);
+}
+
+.pricestrip-median {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--ink-soft);
+  transform: translateX(-1px);
+}
+
+.pricestrip-marker {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--blue);
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(25, 31, 40, 0.25);
+  transform: translate(-7px, -50%);
+}
+
+.pricestrip-labels {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.pricestrip-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.pricestrip-note strong {
+  color: var(--ink);
+}
+
+/* --- 상세 미리보기 모달 --------------------------------------------------------------- */
+
+.detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 20, 28, 0.6);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  animation: fade-in 180ms ease-out;
+}
+
+.detail-modal-frame {
+  position: relative;
+  width: min(480px, 94vw);
+  height: min(86vh, 900px);
+  background: #fff;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: var(--shadow-pop);
+  animation: rise-in 320ms var(--ease-out);
+}
+
+.detail-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(25, 31, 40, 0.72);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 14px;
+}
+
+.detail-modal-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
 /* ── 리허설 배너 ─────────────────────────────────────────────── */
 
 /* 무대 하단 스트립과 톱밴드 칩을 둘 다 피해 좌하단에 둔다. */
@@ -3676,15 +4790,122 @@ textarea {
 
 /* ── 반응형 ──────────────────────────────────────────────────── */
 
-/* 낮은 화면에서는 무대 헤드라인을 압축해 조립 틀에 높이를 넘긴다 —
+/* 낮은 화면에서는 무대 내레이션을 압축해 조립 틀에 높이를 넘긴다 —
    틀이 무대의 유일한 주인공이고, 잘린 칸은 거짓말이 된다. */
 @media (max-height: 940px) {
-  .stage-lede h2 {
-    font-size: clamp(1.9rem, 2.6vw + 0.4rem, 3.2rem);
+  .stage-lede h1 {
+    font-size: clamp(1.2rem, 1.4vw + 0.4rem, 1.9rem);
   }
 
   .stage-lede p {
     font-size: 13px;
+  }
+}
+
+/* 1366x768 · 1440x900 노트북 — 데모가 실제로 도는 화면이다. 틀 안의 고정 높이를
+   전부 한 단계씩 조여 등록 칸이 잘리지 않게 한다 (여백 → 글자 크기 → 패널 순). */
+@media (max-height: 860px) {
+  .stage {
+    gap: 8px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .stage-lede h1 {
+    font-size: clamp(1.05rem, 1.2vw + 0.35rem, 1.5rem);
+  }
+
+  .stage-lede p {
+    font-size: 12.5px;
+  }
+
+  .frame-body {
+    padding: 14px 16px;
+    gap: 16px;
+  }
+
+  .frame-info {
+    gap: 9px;
+  }
+
+  .slot-title {
+    min-height: 42px;
+  }
+
+  .slot-title h3 {
+    font-size: clamp(1.25rem, 1.62vw, 2rem);
+  }
+
+  .slot-price {
+    min-height: 38px;
+  }
+
+  /* 낮은 화면 — 정가 줄도 함께 줄어야 하므로 변수로 내린다. */
+  .frame-price-block {
+    --price-size: clamp(1.4rem, 1.7vw, 2rem);
+  }
+
+  .frame-meta {
+    padding-top: 9px;
+    gap: 5px 16px;
+  }
+
+  .frame-meta li {
+    font-size: 12.5px;
+  }
+
+  .frame-detail {
+    padding: 9px 16px 12px;
+  }
+
+  .frame-panels {
+    margin-top: 8px;
+  }
+}
+
+/* 세 칼럼이 서로를 밀기 시작하는 폭 — 상세페이지를 아래 행으로 내린다. */
+@media (max-width: 1199px) {
+  .frame-body {
+    grid-template-columns: minmax(0, 0.38fr) minmax(0, 0.62fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .frame-detail {
+    grid-column: 1 / -1;
+    border-left: 0;
+    border-top: 1px solid var(--stage-line);
+    padding: 12px 0 0;
+  }
+
+  .frame-panels {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-auto-rows: auto;
+    flex: none;
+  }
+
+  .slot-panel {
+    width: auto;
+    height: clamp(88px, 12.5vh, 150px);
+    justify-self: center;
+  }
+
+  .frame-detail-head {
+    flex-wrap: nowrap;
+  }
+
+  .frame-concept {
+    flex: 0 1 auto;
+    -webkit-line-clamp: 1;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .frame-gallery {
+    height: clamp(76px, 11vh, 132px);
+  }
+
+  .slot-gallery {
+    height: 100%;
   }
 }
 
@@ -3697,22 +4918,22 @@ textarea {
     min-height: clamp(220px, 32vh, 360px);
   }
 
-  .stage-lede h2 {
-    font-size: clamp(1.7rem, 5.4vw, 2.6rem);
-  }
-
-  /* 무대가 1열 auto 행으로 풀리고 세로 스크롤을 담당한다 (카드 중간 절단 금지).
-     명시 행 수를 고정하면 마지막 자식이 암시 행으로 밀려 앞 행과 겹친다 — 전부 암시 행으로 둔다. */
+  /* 좁은 화면: 무대는 세로 스크롤로 강등 — 중간 절단 금지. */
   .stage {
-    grid-template-rows: none;
-    grid-auto-rows: min-content;
-    align-content: start;
+    grid-template-rows: auto auto auto auto;
     overflow-y: auto;
     overflow-x: hidden;
   }
 
-  .stage-arena {
-    min-height: 0;
+  .stage-lede h1 {
+    font-size: clamp(1.5rem, 5vw, 2.1rem);
+  }
+
+  .stage-origin figcaption {
+    display: none;
+  }
+
+  .assembly {
     display: block;
   }
 
@@ -3722,54 +4943,58 @@ textarea {
   }
 
   .frame-body {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: 1fr;
     grid-template-rows: auto;
-    overflow: visible;
   }
 
-  .frame-media,
-  .frame-info,
-  .frame-detail {
-    grid-column: 1;
-    grid-row: auto;
-    overflow: visible;
-    min-height: 0;
-  }
-
-  /* 세로 스택에서는 폭이 정사각을 정한다 — height:100% 는 미정 높이라 무의미하다. */
+  /* 1열로 풀리면 높이를 정해 줄 flex 가 없다 — 이때만 정사각으로 묶는다. */
   .slot-thumb {
-    height: auto;
-    width: 100%;
-    max-width: min(100%, 420px);
+    flex: none;
+    aspect-ratio: 1;
+    max-width: min(100%, 460px);
   }
 
-  .frame-media {
-    grid-template-rows: auto auto;
+  /* 패널 6장이 한 줄에 다 못 들어가면 가로 스크롤로 흘린다 (스크롤바 은닉). */
+  .frame-panels {
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    grid-auto-columns: minmax(96px, 1fr);
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
-  .frame-gallery,
-  .panel-row {
-    flex-wrap: wrap;
+  .frame-panels::-webkit-scrollbar {
+    display: none;
+  }
+
+  .slot-panel {
+    flex: none;
+  }
+
+  /* 좁은 화면에서는 리빌 카드가 틀을 가리므로 즉시 장착에 가깝게 줄인다. */
+  .reveal-card {
+    max-width: 92%;
   }
 }
 
 @media (max-width: 860px) {
-  .rs-board {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
+  .rs-grid,
+  .rs-sections {
+    grid-template-columns: 1fr;
   }
 
-  .rs-arrow {
+  .rs-board,
+  .rs-made {
+    grid-template-columns: 1fr;
+  }
+
+  .rs-flow {
     transform: rotate(90deg);
   }
 
-  .rs-after {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
-  }
-
-  .drawer {
-    width: 100%;
+  .rs-src {
+    width: min(220px, 60%);
+    margin: 0 auto;
   }
 }
 
@@ -3790,13 +5015,42 @@ textarea {
     white-space: nowrap;
   }
 
+  .stage {
+    padding: 14px 16px 16px;
+  }
+
+  .stage-top {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .stage-top-meta {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  /* 320~640px: 브랜드 + 시계만 — RUN/RAW 칩은 접는다. */
+  .stage-brand-chip,
   .stage-chip-run,
   .stage-chip-raw {
     display: none;
   }
 
-  .panel-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .stage-strip ol {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .ph {
+    flex: none;
+    padding: 8px 13px;
+    font-size: 12.5px;
+  }
+
+  .detail-facts {
+    grid-template-columns: 1fr;
   }
 
   .mon-body {
@@ -3821,10 +5075,6 @@ textarea {
   .qr-stage {
     grid-template-columns: minmax(0, 1fr);
     justify-items: center;
-  }
-
-  .rs-kv b {
-    flex-basis: 70px;
   }
 }
 
@@ -3867,7 +5117,7 @@ textarea {
 
 /* ── 떠 있는 헤더 보정 — 바가 사라진 만큼 각 화면이 제 여백을 진다 ── */
 
-.list,
+.library,
 .rs {
   padding-top: clamp(84px, 11vh, 108px);
 }

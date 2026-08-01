@@ -1,50 +1,100 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatDate, formatElapsed, formatPrice } from "./api";
-import { ListingFrame, RevealCard, useRevealDirector } from "./Assembly";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  PHASES,
-  REVEAL_ORDER,
-  ROLE_LABEL,
-  SCENE_HEADLINE,
-  SCENE_SUB,
+  ArrowRightIcon,
+  ArrowUpRightIcon,
+  BroadcastIcon,
+  CameraIcon,
+  CheckCircleIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
+import type { ListingRecord, LiveEvent } from "./domain/types";
+import {
   applyEvent,
   initialDerived,
+  KC_LABEL,
+  PHASES,
   phaseStates,
+  ROLE_LABEL,
+  SCENE_SUB,
+  sceneHeadline,
   sceneOf,
-  type ControlDerived,
 } from "./stage-model";
-import type { ListingRecord, LiveEvent } from "./domain/types";
+import type { ControlDerived, TerminalStatus } from "./stage-model";
+import { AssemblyStage } from "./Assembly";
+
+/**
+ * 등록 실황 스테이지 — 풀블리드 · 등록안 조립형.
+ *
+ * 원거리: 상단 헤드라인 한 문장이 현 단계를 말한다.
+ * 근거리: 스마트스토어 상품 페이지 모양의 "틀"이 상주하고, 산출물이 완성될 때마다
+ * 화면 중앙에 크게 등장했다가 제자리에 장착된다.
+ * 좌하단 원본 사진과 하단 7단계 스트립이 실황을 받친다.
+ * 화면의 모든 값은 /api/stream(SSE) 실이벤트에서만 온다.
+ */
 
 const TERMINAL = new Set(["registered", "needs_review", "failed"]);
+
+function formatClock(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function useElapsed(listing: ListingRecord, running: boolean, tapeMs: number | null): string {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running || tapeMs != null) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running, tapeMs]);
+  /*
+    리허설은 **녹화된 런의 시계**를 보여 준다. 재생 벽시계로 세면 압축 재생에서
+    "20초 만에 등록됐다"는 거짓이 되고, 녹화 시각을 기준으로 세면 T+180분이 뜬다.
+    테이프의 첫 이벤트와 마지막 적용 이벤트 사이가 그 런에 실제로 걸린 시간이다.
+  */
+  if (tapeMs != null) return formatClock(tapeMs);
+  const started = new Date(listing.createdAt).getTime();
+  const base = Number.isNaN(started) ? now : started;
+  // 종착 후에는 시계를 멈춘다 — 끝난 런의 T+ 가 계속 오르면 아직 도는 것처럼 읽힌다.
+  const end = running ? now : new Date(listing.updatedAt).getTime() || now;
+  return formatClock(end - base);
+}
 
 export interface MissionControlProps {
   listing: ListingRecord;
   /** 리허설 드라이버 전용 — 주어지면 SSE 를 구독하지 않는다. */
   feed?: LiveEvent[];
   rehearsal?: boolean;
+  /** 리허설 고지에 덧붙일 단서 (압축 재생·할인 투영 등). 무대는 배너를 가리므로 여기로 받는다. */
+  rehearsalNote?: string;
+  /** 판정 결과 확인 — 목록의 상세로 보낸다. */
+  onReview?: () => void;
   /** 종착 보고를 닫는다. 파이프라인 입력이 아니라 화면 이동일 뿐이다. */
   onDismiss?: () => void;
-  onOpenList?: () => void;
+  /** 조립 연출이 아직 남았는지 — 결과 화면 전환이 이걸 기다린다. */
+  onPlayingChange?: (playing: boolean) => void;
 }
 
 export function MissionControl({
   listing,
   feed,
   rehearsal = false,
+  rehearsalNote,
+  onReview,
   onDismiss,
-  onOpenList,
+  onPlayingChange,
 }: MissionControlProps) {
   const [derived, setDerived] = useState<ControlDerived>(initialDerived);
-  const [elapsed, setElapsed] = useState(0);
   const listingIdRef = useRef(listing.id);
   const lastSeqRef = useRef(0);
-  const slotsRef = useRef(new Map<string, HTMLElement>());
-
   listingIdRef.current = listing.id;
 
-  /* SSE 구독 */
+  /* 실전: SSE 구독. 리허설(feed 제공) 시에는 구독하지 않는다. */
   useEffect(() => {
     if (feed) return;
+    setDerived(initialDerived);
+    lastSeqRef.current = 0;
     const source = new EventSource("/api/stream");
     const onLive = (message: MessageEvent<string>) => {
       let event: LiveEvent;
@@ -67,7 +117,7 @@ export function MissionControl({
       source.removeEventListener("live", onLive as EventListener);
       source.close();
     };
-  }, [feed]);
+  }, [listing.id, feed]);
 
   /* 리허설 재생 — 주입된 배열을 리듀서에 통과시킨다.
      ⚠ seq 커서를 상태 업데이터 **안에서** 옮기면 안 된다. React 가 업데이터를
@@ -87,167 +137,145 @@ export function MissionControl({
     setDerived((current) => fresh.reduce(applyEvent, current));
   }, [feed]);
 
-  /* T+ 시계 */
-  useEffect(() => {
-    const started = new Date(listing.createdAt).getTime();
-    const base = Number.isNaN(started) ? Date.now() : started;
-    const tick = () => setElapsed(Date.now() - base);
-    tick();
-    const timer = window.setInterval(tick, 1000);
-    return () => window.clearInterval(timer);
-  }, [listing.createdAt]);
-
-  const terminalStatus = TERMINAL.has(listing.status)
+  const terminal: TerminalStatus = TERMINAL.has(listing.status)
     ? (listing.status as "registered" | "needs_review" | "failed")
     : null;
-  const isTerminal = terminalStatus !== null;
-  const stage = derived.liveStage ?? listing.stage;
-  const scene = sceneOf(stage, derived, terminalStatus);
-  const states = phaseStates(derived, stage, terminalStatus);
-  const progress = terminalStatus === "registered" ? 1 : Math.min(1, (derived.liveProgress || listing.progress) / 100);
-  const liveRegistered =
-    listing.publication?.mode === "live" && listing.publication?.liveStatus === "registered";
-
-  const registerSlot = useCallback((key: string, node: HTMLElement | null) => {
-    if (node) slotsRef.current.set(key, node);
-    else slotsRef.current.delete(key);
-  }, []);
-
-  const slotRef = useCallback((key: string) => slotsRef.current.get(key) ?? null, []);
-  const shotUrlBySlot = useCallback(
-    (slot: string) => {
-      if (slot === "thumb") return derived.shots.find((shot) => shot.index === 0)?.url ?? null;
-      const gallery = slot.match(/^gallery-(\d+)$/);
-      if (gallery) return derived.shots.filter((shot) => shot.index > 0)[Number(gallery[1])]?.url ?? null;
-      const panel = slot.match(/^panel-(\d+)$/);
-      if (panel) return derived.panels[Number(panel[1])]?.url ?? null;
-      return null;
-    },
-    [derived.panels, derived.shots],
-  );
-
-  /**
-   * 아직 도착하지 않았지만 곧 올 산출물의 서사 순번.
-   * 리빌 디렉터가 이걸 보고 앞 순번을 기다린다 — 병렬 실행이어도 화면은 순서대로 읽힌다.
-   */
-  const expectedOrders = useMemo(() => {
-    const pending: number[] = [];
-    if (!derived.productGroup) pending.push(REVEAL_ORDER.productGroup);
-    if (!derived.categoryPath) pending.push(REVEAL_ORDER.category);
-    if (!derived.shots.some((shot) => shot.index === 0)) pending.push(REVEAL_ORDER.mainImage);
-    if (derived.shotDone < derived.shotStarts) pending.push(REVEAL_ORDER.gallery);
-    if (derived.price == null) pending.push(REVEAL_ORDER.price);
-    if (!derived.seoTitle) pending.push(REVEAL_ORDER.title);
-    if (!derived.noticeType) pending.push(REVEAL_ORDER.requiredFields);
-    if (derived.planStarted && !derived.plan) pending.push(REVEAL_ORDER.detailPlan);
-    return pending;
-  }, [
-    derived.categoryPath,
-    derived.noticeType,
-    derived.plan,
-    derived.planStarted,
-    derived.price,
-    derived.productGroup,
-    derived.seoTitle,
-    derived.shotDone,
-    derived.shotStarts,
-    derived.shots,
-  ]);
-
-  const reveal = useRevealDirector({
-    cards: derived.cards,
-    slotRef,
-    terminal: isTerminal,
-    expectedOrders,
-    shotUrlBySlot,
-  });
-
-  const headline = SCENE_HEADLINE[scene] ?? derived.liveLabel ?? listing.stageLabel;
-  // 상품명 2단 착지는 **한 번만** 일어난다: 상품군 → 확정된 등록 상품명.
-  // draft.title 을 중간에 끼우면 교체가 두 번 일어나 "대충 만든 이름"으로 읽힌다.
-  const finalTitle = listing.materials?.registrationTitle ?? null;
-  const revealMedia = reveal.card?.slot ? shotUrlBySlot(reveal.card.slot) : null;
+  // 중단·실패 시에는 마지막 진행 지점 기준으로 그린다 — 가보지 않은 단계가
+  // "완료"로 보이면 거짓말이 된다.
+  const stage =
+    terminal === "needs_review" || terminal === "failed"
+      ? (derived.lastRunningStage ?? "queued")
+      : derived.liveStage && !terminal
+        ? derived.liveStage
+        : listing.stage;
+  const progress = Math.max(derived.liveProgress ?? 0, listing.progress ?? 0);
+  const stageLabel = (!terminal && derived.liveLabel) || listing.stageLabel;
+  const states = useMemo(() => phaseStates(derived, stage, terminal), [derived, stage, terminal]);
+  const live =
+    derived.registeredMode === "live" ||
+    (listing.publication?.mode === "live" && listing.publication?.liveStatus === "registered");
+  const scene = sceneOf(stage, derived, terminal);
+  // 리허설이면 테이프가 시계를 갖고 있다 — 재생 속도와 무관하게 실런의 경과를 말한다.
+  const tapeMs = useMemo(() => {
+    if (!feed || feed.length === 0) return null;
+    const first = Date.parse(feed[0].at);
+    const last = Date.parse(feed[feed.length - 1].at);
+    return Number.isFinite(first) && Number.isFinite(last) ? Math.max(0, last - first) : null;
+  }, [feed]);
+  const elapsed = useElapsed(listing, terminal == null, tapeMs);
+  const blockReasons = listing.blockReasons ?? listing.draft?.blockReasons ?? [];
+  const halted = terminal === "needs_review" || terminal === "failed";
 
   return (
-    <div className="stage" role="region" aria-label="등록 실황">
-      <div className="stage-top">
+    <div
+      className={`stage${terminal === "registered" ? " is-complete" : ""}${halted ? " is-halted" : ""}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label="등록 실황"
+    >
+      <header className="stage-top">
         <span className="stage-brand">
-          Snap2Store<em>등록 실황</em>
+          Snap2Store <span className="stage-brand-chip">등록 실황</span>
         </span>
-        <div className="stage-chips">
-          {rehearsal ? <span className="stage-chip">녹화된 실런 재생 — 실제 에이전트 실행 아님</span> : null}
-          <span className="stage-chip stage-chip-mono stage-chip-run">RUN {listing.id.slice(0, 8)}</span>
-          <span className="stage-chip stage-chip-mono">T+{formatElapsed(elapsed)}</span>
+        <div className="stage-top-meta">
+          <span className="stage-chip stage-chip-mono stage-chip-run">
+            {rehearsal ? "REHEARSAL" : `RUN ${listing.id.slice(0, 8).toUpperCase()}`}
+          </span>
+          {/* 실행 모드 칩은 두지 않는다 — 진짜로 등록된다는 건 전제이지 상태가
+              아니다. 리허설(녹화 재생)만은 표기해야 거짓 실황이 되지 않는다. */}
+          {rehearsal ? <span className="stage-chip stage-chip-rehearsal">리허설</span> : null}
+          <span className="stage-chip stage-chip-mono" aria-label="경과 시간">
+            T+{elapsed}
+          </span>
           <a
-            className="stage-chip stage-chip-mono stage-chip-link stage-chip-raw"
+            className="stage-chip stage-chip-link stage-chip-mono stage-chip-raw"
             href="/stream"
             target="_blank"
             rel="noreferrer"
+            aria-label={`Raw API Stream — 수신 ${derived.rawCount}건, 세컨드 화면에 열기`}
           >
-            RAW {derived.rawCount.toLocaleString("ko-KR")} ↗
+            <BroadcastIcon size={12} weight="bold" aria-hidden="true" /> RAW{" "}
+            {derived.rawCount.toLocaleString("ko-KR")}
+            <ArrowUpRightIcon size={11} weight="bold" aria-hidden="true" />
           </a>
         </div>
-      </div>
+      </header>
 
-      <div className="stage-lede">
-        <h2 className={scene === "complete" ? "finish" : ""} aria-live="polite">
-          {headline}
-        </h2>
+      <div className="stage-lede" key={scene} aria-live="polite">
+        <h1>{sceneHeadline(scene, stageLabel)}</h1>
         <p>{SCENE_SUB[scene]}</p>
+        {rehearsal ? (
+          <p className="stage-rehearsal-tag">
+            녹화된 실런 재생 — 실제 에이전트 실행 아님{rehearsalNote ? ` · ${rehearsalNote}` : ""}
+          </p>
+        ) : null}
       </div>
 
       <div className="stage-arena">
-        <ListingFrame
+        <AssemblyStage
           derived={derived}
-          finalTitle={finalTitle}
-          tags={(listing.materials?.tags.tags ?? []).map((tag) => tag.text)}
-          complete={terminalStatus === "registered"}
-          live={liveRegistered}
-          targetSlot={reveal.targetSlot}
-          heldSlots={reveal.heldSlots}
-          registerSlot={registerSlot}
+          listing={listing}
+          scene={scene}
+          live={live}
+          terminal={terminal}
+          onPlayingChange={onPlayingChange}
         />
-        {reveal.card ? <div className="reveal-scrim" /> : null}
-        {reveal.card ? (
-          <RevealCard card={reveal.card} cardRef={reveal.cardRef} mediaUrl={revealMedia} />
-        ) : null}
-        {terminalStatus && terminalStatus !== "registered" ? (
-          <HaltOverlay
-            listing={listing}
-            terminal={terminalStatus}
-            onDismiss={onDismiss}
-            onOpenList={onOpenList}
-          />
-        ) : null}
       </div>
 
-      <div>
-        <div className="stage-strip">
-          <div className="evidence" data-launch-target="evidence">
-            {listing.photoUrls[0] ? <img src={listing.photoUrls[0]} alt="내가 올린 사진" /> : null}
-          </div>
-          <ol className="phase-rail">
+      <footer className="stage-strip" aria-label="파이프라인 단계">
+        <div className="stage-strip-row">
+          <figure className={`stage-origin${derived.productName ? "" : " is-scanning"}`}>
+            {/* 발사 전환의 착지점은 사진 칸이다 — figure 에 붙이면 캡션까지 포함한
+                넓은 사각형이 되어 사진이 캡션 위로 내려앉는다. */}
+            <span className="stage-origin-img" data-launch-target="evidence">
+              {listing.photoUrls[0] ? <img src={listing.photoUrls[0]} alt="업로드한 상품 사진" /> : null}
+              <span className="stage-scanline" aria-hidden="true" />
+            </span>
+            <figcaption>
+              <span className="stage-origin-k">
+                <CameraIcon size={11} weight="bold" aria-hidden="true" /> 원본
+              </span>
+              {derived.productName ? `“${derived.productName}”` : "판독 중"}
+            </figcaption>
+          </figure>
+          <ol>
             {PHASES.map((phase, index) => (
-              <li key={phase.key} className={`phase ${states[index]}`}>
-                <i />
-                <b>{index + 1}</b>
+              <li key={phase.key} className={`ph is-${states[index]}`}>
+                <span className="ph-dot" aria-hidden="true">
+                  {states[index] === "done" ? (
+                    <CheckCircleIcon size={12} weight="fill" />
+                  ) : states[index] === "blocked" ? (
+                    <WarningCircleIcon size={12} weight="fill" />
+                  ) : null}
+                </span>
                 {phase.label}
-                {states[index] === "skipped" ? <u>생략</u> : null}
+                {states[index] === "skipped" ? <span className="ph-skip">생략</span> : null}
                 <span className="sr-only">{phaseStateLabel(states[index])}</span>
               </li>
             ))}
           </ol>
         </div>
         <div
-          className={`progress ${terminalStatus === "registered" ? "done" : ""}`}
+          className="stage-progress"
           role="progressbar"
+          aria-valuenow={progress}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-valuenow={Math.round(progress * 100)}
+          aria-label="전체 진행률"
         >
-          <span style={{ "--p": progress } as React.CSSProperties} />
+          <span style={{ transform: `scaleX(${Math.min(100, Math.max(0, progress)) / 100})` }} />
         </div>
-      </div>
+      </footer>
+
+      {halted ? (
+        <HaltOverlay
+          listing={listing}
+          terminal={terminal}
+          blockReasons={blockReasons}
+          onReview={onReview}
+          onDismiss={onDismiss}
+        />
+      ) : null}
     </div>
   );
 }
@@ -255,15 +283,15 @@ export function MissionControl({
 function phaseStateLabel(state: string): string {
   switch (state) {
     case "active":
-      return "진행 중";
+      return " 진행 중";
     case "done":
-      return "완료";
+      return " 완료";
     case "skipped":
-      return "에이전트 판단으로 생략";
+      return " 에이전트 판단으로 생략";
     case "blocked":
-      return "여기서 중단";
+      return " 여기서 중단";
     default:
-      return "대기";
+      return " 대기";
   }
 }
 
@@ -271,120 +299,177 @@ function phaseStateLabel(state: string): string {
 function HaltOverlay({
   listing,
   terminal,
+  blockReasons,
+  onReview,
   onDismiss,
-  onOpenList,
 }: {
   listing: ListingRecord;
   terminal: "needs_review" | "failed";
+  blockReasons: string[];
+  onReview?: () => void;
   onDismiss?: () => void;
-  onOpenList?: () => void;
 }) {
   // ⚠ "거부" 문자열 매칭은 오판을 만든다 — 네이버 API 거절 메시지에도 "거부"가 들어간다.
   //   에이전트의 자율 거부 판정은 "고위험" 문구로만 식별한다.
-  const refused = listing.blockReasons.some((reason) => reason.includes("고위험"));
-  const copy =
-    terminal === "needs_review"
-      ? refused
-        ? {
-            h2: "에이전트가 등록을 거부했습니다",
-            p: "자율 판정 — 고위험 의심 상품은 스스로 거르는 것까지가 이 에이전트의 일입니다.",
-          }
-        : {
-            h2: "등록 결과를 보고합니다",
-            p: "자동 재전송은 중복 등록 위험이 있어 하지 않습니다 — 사유를 그대로 보고합니다.",
-          }
-      : { h2: "등록을 완료하지 못했습니다", p: listing.error ?? "실행 중 오류가 발생했습니다." };
-
-  const reasons = listing.blockReasons.length > 0 ? listing.blockReasons : listing.error ? [listing.error] : [];
+  const refused = blockReasons.some((reason) => reason.includes("고위험"));
+  const reasons = blockReasons.length > 0 ? blockReasons : listing.error ? [listing.error] : [];
 
   return (
-    <div className="halt">
-      <div className="halt-card">
-        <h2>{copy.h2}</h2>
-        <p>{copy.p}</p>
+    <div className="stage-halt" role="alert">
+      <div className="stage-halt-card">
+        <WarningCircleIcon size={28} weight="fill" aria-hidden="true" />
+        <h2>
+          {terminal === "needs_review"
+            ? refused
+              ? "에이전트가 등록을 거부했습니다"
+              : "등록 결과를 보고합니다"
+            : "등록을 완료하지 못했습니다"}
+        </h2>
+        <p>
+          {terminal === "needs_review"
+            ? refused
+              ? "자율 판정 — 고위험 의심 상품은 스스로 거르는 것까지가 이 에이전트의 일입니다."
+              : "자동 재전송은 중복 등록 위험이 있어 하지 않습니다 — 사유를 그대로 보고합니다."
+            : (listing.error ?? "다시 시도해 주세요.")}
+        </p>
         {reasons.length > 0 ? (
-          <ul className="halt-reasons">
+          <ul>
             {reasons.map((reason, index) => (
               <li key={index}>{reason}</li>
             ))}
           </ul>
         ) : null}
-        {/* 해소 폼이 아니다 — 종착 보고를 읽고 나가는 화면 이동일 뿐이다. */}
-        {onDismiss || onOpenList ? (
-          <div className="rs-actions" style={{ marginBottom: 0 }}>
-            {onOpenList ? (
-              <button type="button" className="btn btn-ghost-dark" onClick={onOpenList}>
-                올린 물건 목록
-              </button>
-            ) : null}
-            {onDismiss ? (
-              <button type="button" className="btn btn-ghost-dark" onClick={onDismiss}>
-                새 상품 올리기
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="stage-halt-actions">
+          {terminal === "needs_review" && onReview ? (
+            <button type="button" className="btn btn-primary" onClick={onReview}>
+              판정 결과 확인
+            </button>
+          ) : null}
+          {onDismiss ? (
+            <button type="button" className="btn btn-ghost-dark" onClick={onDismiss}>
+              닫기
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
 }
 
-/* ═════════ 결과 화면 ═════════ */
+/* ═════════ 결과 쇼케이스 ═════════ */
+
+/** 시세 분포 속 판매가 위치 — 단일 축 스트립 (min–IQR–median–max + 마커). */
+function PriceStrip({
+  distribution,
+  price,
+}: {
+  distribution: { sampleSize: number; min: number; p25: number; median: number; p75: number; max: number };
+  price: number;
+}) {
+  const span = Math.max(1, distribution.max - distribution.min);
+  const pct = (value: number) => Math.min(100, Math.max(0, ((value - distribution.min) / span) * 100));
+  const format = (value: number) => `${new Intl.NumberFormat("ko-KR").format(value)}원`;
+  return (
+    <div
+      className="pricestrip"
+      role="img"
+      aria-label={`시세 ${distribution.sampleSize}건 분포에서 판매가 ${format(price)} 위치`}
+    >
+      <div className="pricestrip-track">
+        <span
+          className="pricestrip-iqr"
+          style={{
+            left: `${pct(distribution.p25)}%`,
+            width: `${pct(distribution.p75) - pct(distribution.p25)}%`,
+          }}
+        />
+        <span className="pricestrip-median" style={{ left: `${pct(distribution.median)}%` }} />
+        <span className="pricestrip-marker" style={{ left: `${pct(price)}%` }} />
+      </div>
+      <div className="pricestrip-labels">
+        <span>최저 {format(distribution.min)}</span>
+        <span>중앙값 {format(distribution.median)}</span>
+        <span>최고 {format(distribution.max)}</span>
+      </div>
+      <p className="pricestrip-note">
+        실판매 {distribution.sampleSize}건 · IQR 정제 후 보수적 백분위 → <strong>{format(price)}</strong>
+      </p>
+    </div>
+  );
+}
 
 export interface ResultShowcaseProps {
   listing: ListingRecord;
+  /** 리허설 재생 결과 — 녹화 런임을 표기한다. */
+  rehearsal?: boolean;
   onNew: () => void;
   onList: () => void;
 }
 
-export function ResultShowcase({ listing, onNew, onList }: ResultShowcaseProps) {
-  const [previewOpen, setPreviewOpen] = useState(false);
+/** 완료의 한 방 — 산출물 전시 + 상세 기획 공개. */
+export function ResultShowcase({ listing, rehearsal = false, onNew, onList }: ResultShowcaseProps) {
+  const [showDetail, setShowDetail] = useState(false);
   const materials = listing.materials;
   const publication = listing.publication;
-  const live = publication?.mode === "live" && publication.liveStatus === "registered";
+  const media = materials?.media ?? null;
+  const plan = materials?.detailPlan ?? null;
+  const draft = listing.draft;
+
+  const beforeUrl = listing.photoUrls[0] ?? null;
+  const afterMain = media?.mainUrl ?? listing.photoUrls[0] ?? null;
+  const gallery = media?.galleryUrls ?? [];
+  // 패널 URL 은 materials 에서 읽는다 — 이벤트는 잘릴 수 있어 신뢰하지 않는다.
+  const panelUrls = media?.panelUrls ?? [];
+  const productUrl = publication?.productUrl ?? null;
+  const detailPreviewUrl = media?.detailPreviewUrl ?? null;
+  const isLive = publication?.mode === "live" && publication?.liveStatus === "registered";
   const holds = publication?.holdReasons ?? [];
 
-  const mainUrl = materials?.media.mainUrl ?? listing.photoUrls[0] ?? null;
-  const galleryUrls = materials?.media.galleryUrls ?? [];
-  // 패널 URL 은 materials 에서 읽는다 — 이벤트는 160건에서 잘리므로 신뢰하지 않는다.
-  const panelUrls = materials?.media.panelUrls ?? [];
-  const timings = materials?.timings;
+  const distribution = materials?.price?.distribution ?? null;
+  const salePrice = materials?.price?.salePrice ?? draft?.salePrice ?? null;
+  const tags = materials?.tags?.tags ?? (draft?.tags ?? []).map((text) => ({ text, official: true }));
+  const categoryPath = (materials?.category?.categoryName ?? draft?.categoryName ?? "")
+    .split(">")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const timings = materials?.timings ?? null;
+  const attempts = materials?.category?.match?.attempts ?? [];
+
+  const priceText = useMemo(
+    () => (salePrice ? `${new Intl.NumberFormat("ko-KR").format(salePrice)}원` : ""),
+    [salePrice],
+  );
 
   useEffect(() => {
-    if (!previewOpen) return;
+    if (!showDetail) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPreviewOpen(false);
+      if (event.key === "Escape") setShowDetail(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [previewOpen]);
+  }, [showDetail]);
 
   return (
-    <div className="rs">
-      <div className="rs-head">
-        <span className={`rs-badge ${live ? "" : "hold"}`}>
-          <i aria-hidden>
-            <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-              <path d="M3 8.5 6.2 11.7 13 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </i>
-          {live ? "스마트스토어에 등록됐습니다" : "등록안이 완성됐습니다"}
-        </span>
-        <h1>{materials?.registrationTitle ?? listing.draft?.title ?? "등록안"}</h1>
-        <div className="rs-facts">
-          <b>{formatPrice(materials?.price.salePrice ?? listing.draft?.salePrice)}</b>
-          <span>·</span>
-          <span>{materials?.category.leafName ?? materials?.category.categoryName ?? "카테고리 미확정"}</span>
+    <section className="rs">
+      <header className="rs-head">
+        <p className={`rs-status${isLive ? " is-live" : ""}`}>
+          <CheckCircleIcon size={15} weight="fill" aria-hidden="true" />
+          {isLive ? "스마트스토어에 등록됐습니다" : "등록안이 완성됐습니다"}
+        </p>
+        {rehearsal ? (
+          <p className="rs-rehearsal">리허설 재생 결과 — 녹화된 실런의 산출물입니다</p>
+        ) : null}
+        <h2>{materials?.registrationTitle ?? draft?.title ?? "등록안"}</h2>
+        <p className="rs-head-meta">
+          <strong>{priceText}</strong>
+          {categoryPath.length > 0 ? <span> · {categoryPath[categoryPath.length - 1]}</span> : null}
           {publication?.channelProductNo ? (
-            <>
-              <span>·</span>
-              <span className="mono">상품번호 {publication.channelProductNo}</span>
-            </>
+            <span className="mono"> · 상품번호 {publication.channelProductNo}</span>
           ) : null}
-        </div>
+        </p>
         {holds.length > 0 ? (
-          <div className="rs-hold">
-            <b>스토어에 올리지는 못했습니다 — 등록안은 완성됐습니다</b>
+          <div className="rs-hold" role="note">
+            <strong>스토어에 올리지는 못했습니다 — 등록안은 완성됐습니다</strong>
             <ul>
               {holds.map((reason, index) => (
                 <li key={index}>{reason}</li>
@@ -392,61 +477,76 @@ export function ResultShowcase({ listing, onNew, onList }: ResultShowcaseProps) 
             </ul>
           </div>
         ) : null}
-      </div>
+      </header>
 
-      {/* 완성 보드 — 원본 → 대표 + 추가컷 + 상세컷을 첫 화면에 통째로 */}
-      <div className="rs-board">
-        <div className="rs-before">
-          {listing.photoUrls[0] ? <img src={listing.photoUrls[0]} alt="내가 올린 사진" /> : null}
-          <span className="rs-cap">내가 올린 사진</span>
-        </div>
-        <div className="rs-arrow" aria-hidden>
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-            <path d="M4 12h15M13 6l6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
-        <div className="rs-after">
-          <div className="rs-main">
-            {mainUrl ? <img src={mainUrl} alt="대표 이미지" /> : null}
-            <span className="rs-cap">대표 이미지</span>
-          </div>
-          <div className="rs-cuts">
-            {galleryUrls.length > 0 ? (
-              <div>
-                <div className="rs-cut-row">
-                  {galleryUrls.map((url, index) => (
-                    <img key={url} src={url} alt={`추가 컷 ${index + 1}`} />
+      {/*
+        완성 보드 — 첫 화면에서 "사진 한 장이 이만큼이 됐다"가 통째로 보여야 한다.
+        대표 이미지 하나만 크게 걸면 무엇이 더 만들어졌는지가 스크롤 아래로 숨는다.
+      */}
+      <div className="rs-board" aria-label="에이전트가 만든 등록물">
+        <figure className="rs-src">
+          {beforeUrl ? <img src={beforeUrl} alt="업로드한 원본 사진" /> : null}
+          <figcaption>내가 올린 사진</figcaption>
+        </figure>
+
+        <span className="rs-flow" aria-hidden="true">
+          <ArrowRightIcon size={17} weight="bold" />
+        </span>
+
+        <div className="rs-made">
+          <figure className="rs-hero">
+            {afterMain ? <img src={afterMain} alt="에이전트가 만든 대표 이미지" /> : null}
+            <figcaption>대표 이미지</figcaption>
+          </figure>
+
+          <div className="rs-made-rest">
+            {gallery.length > 0 ? (
+              <figure className="rs-shots">
+                <div className="rs-shots-row">
+                  {gallery.slice(0, 3).map((url, index) => (
+                    <img
+                      key={url}
+                      src={url}
+                      alt="추가 연출 컷"
+                      style={{ animationDelay: `${240 + index * 90}ms` }}
+                    />
                   ))}
                 </div>
-                <span className="rs-cap" style={{ textAlign: "left", display: "block", marginTop: 4 }}>
-                  추가 컷 {galleryUrls.length}장
-                </span>
-              </div>
+                <figcaption>추가 컷 {gallery.length}장</figcaption>
+              </figure>
             ) : null}
+
             {panelUrls.length > 0 ? (
-              <div>
-                <div className="rs-cut-row panels">
-                  {panelUrls.map((url, index) => (
-                    <img key={url} src={url} alt={`상세 ${index + 1}컷`} />
+              <figure className="rs-panels">
+                <div className="rs-panels-row">
+                  {panelUrls.slice(0, 6).map((url, index) => (
+                    <img
+                      key={url}
+                      src={url}
+                      alt="상세페이지 패널"
+                      style={{ animationDelay: `${380 + index * 70}ms` }}
+                    />
                   ))}
                 </div>
-                <span className="rs-cap" style={{ textAlign: "left", display: "block", marginTop: 4 }}>
-                  상세페이지 {panelUrls.length}컷
-                </span>
-              </div>
+                <figcaption>상세페이지 {panelUrls.length}컷</figcaption>
+              </figure>
             ) : null}
           </div>
         </div>
       </div>
 
       <div className="rs-actions">
-        {publication?.productUrl ? (
-          <a className="btn btn-primary" href={publication.productUrl} target="_blank" rel="noreferrer">
-            스마트스토어에서 보기 <span className="arrow">↗</span>
+        {productUrl ? (
+          <a className="btn btn-primary" href={productUrl} target="_blank" rel="noreferrer">
+            스마트스토어에서 보기 <ArrowUpRightIcon size={15} weight="bold" aria-hidden="true" />
           </a>
         ) : null}
-        {materials?.media.detailPreviewUrl ? (
-          <button type="button" className="btn btn-ghost" onClick={() => setPreviewOpen(true)}>
+        {detailPreviewUrl ? (
+          <button
+            type="button"
+            className={productUrl ? "btn btn-ghost" : "btn btn-primary"}
+            onClick={() => setShowDetail(true)}
+          >
             상세페이지 보기
           </button>
         ) : null}
@@ -458,127 +558,118 @@ export function ResultShowcase({ listing, onNew, onList }: ResultShowcaseProps) 
         </button>
       </div>
 
+      <p className="rs-more" aria-hidden="true">
+        등록에 들어간 내용
+      </p>
+
       <div className="rs-grid">
-        {materials?.detailPlan ? (
-          <section className="rs-cell" style={{ "--i": 0 } as React.CSSProperties}>
+        {plan ? (
+          <article className="rs-cell rs-plan">
             <h3>상세페이지 기획</h3>
-            <p className="rs-quote">“{materials.detailPlan.concept}”</p>
-            <p className="rs-sub">{materials.detailPlan.angle}</p>
-            <div className="rs-roles">
-              {materials.detailPlan.sections.map((section, index) => (
-                <div className="rs-role" key={index}>
-                  <u>{ROLE_LABEL[section.role] ?? section.role}</u>
+            <p className="rs-concept">“{plan.concept}”</p>
+            <p className="rs-angle">{plan.angle}</p>
+            <ol className="rs-sections">
+              {plan.sections.map((section, index) => (
+                <li key={`${section.role}-${index}`}>
+                  <span className="rs-role">{ROLE_LABEL[section.role] ?? section.role}</span>
                   <span>{section.heading}</span>
-                  <i className={section.panel ? "on" : ""} />
-                </div>
+                  {section.panel ? <i className="rs-panel-dot" aria-hidden="true" /> : null}
+                </li>
               ))}
-            </div>
-          </section>
+            </ol>
+            <p className="rs-cell-note">
+              세로 패널 {media?.panelCount ?? panelUrls.length}장 · 서사 순서대로 본문에 배치됨
+              {detailPreviewUrl ? (
+                <button type="button" className="rs-inline-btn" onClick={() => setShowDetail(true)}>
+                  상세페이지 열기
+                </button>
+              ) : null}
+            </p>
+          </article>
         ) : null}
 
-        <section className="rs-cell" style={{ "--i": 1 } as React.CSSProperties}>
+        <article className="rs-cell">
           <h3>판매가</h3>
-          <p className="rs-quote">{formatPrice(materials?.price.salePrice)}</p>
-          <p className="rs-sub">{materials?.price.priceBasis ?? listing.draft?.priceBasis ?? "—"}</p>
-        </section>
+          <p className="rs-price">{priceText || "—"}</p>
+          {distribution && salePrice ? (
+            <PriceStrip distribution={distribution} price={salePrice} />
+          ) : (
+            <p className="rs-cell-note">{materials?.price?.priceBasis ?? draft?.priceBasis ?? "—"}</p>
+          )}
+        </article>
 
-        <section className="rs-cell" style={{ "--i": 2 } as React.CSSProperties}>
+        <article className="rs-cell">
           <h3>카테고리</h3>
-          <p className="rs-quote" style={{ fontSize: 15 }}>
-            {materials?.category.categoryName ?? "미확정"}
+          <p className="rs-breadcrumb">
+            {categoryPath.length > 0
+              ? categoryPath.map((part, index) => (
+                  <span key={`${part}-${index}`}>
+                    {part}
+                    {index < categoryPath.length - 1 ? <i aria-hidden="true">›</i> : null}
+                  </span>
+                ))
+              : "미확정"}
           </p>
           {/* 의미 없는 0을 크게 띄우지 않는다 — 라운드 수는 실재할 때만 말한다. */}
-          <p className="rs-sub">
-            {materials?.category.verified
-              ? `검증 통과${
-                  (materials.category.match?.attempts.length ?? 0) > 0
-                    ? ` · ${materials.category.match!.attempts.length}라운드`
-                    : ""
-                }`
+          <p className="rs-cell-note">
+            {materials?.category?.verified
+              ? `LLM 검증 통과${attempts.length > 0 ? ` · ${attempts.length}라운드` : ""}`
               : "후보 채택 — 검증 미통과"}
           </p>
-        </section>
+        </article>
 
-        <section className="rs-cell" style={{ "--i": 3 } as React.CSSProperties}>
-          <h3>검색 태그</h3>
-          <div className="tag-row" style={{ gap: 6 }}>
-            {(materials?.tags.tags ?? []).map((tag) => (
-              <span key={tag.text} className={`tag-chip ${tag.official ? "" : "unofficial"}`}>
-                {tag.text}
+        <article className="rs-cell">
+          <h3>태그 {tags.length}</h3>
+          <p className="rs-tags">
+            {tags.slice(0, 8).map((tag) => (
+              <span key={tag.text} className={tag.official ? "" : "is-unofficial"}>
+                #{tag.text}
               </span>
             ))}
-          </div>
-          <p className="rs-note">
-            {materials?.tags.dictionaryChecked
-              ? "공식 사전 대조 완료 — 회색 칩은 비공식 태그"
+          </p>
+          <p className="rs-cell-note">
+            {materials?.tags?.dictionaryChecked
+              ? "공식 태그 사전 대조 완료 — 회색 칩은 비공식 태그"
               : "태그 정규화 적용 — 공식 사전 대조 미완"}
           </p>
-        </section>
+        </article>
 
-        <section className="rs-cell" style={{ "--i": 4 } as React.CSSProperties}>
+        <article className="rs-cell">
           <h3>등록 정보</h3>
-          <div className="rs-kv">
-            <div>
-              <b>원산지</b>
-              <span>{materials?.origin.originAreaInfo?.content ?? "—"}</span>
-            </div>
-            <div>
-              <b>KC</b>
-              <span>{materials?.kc.statusLabel ?? "—"}</span>
-            </div>
-            <div>
-              <b>고시</b>
-              <span>
-                {materials?.notice.typeUnconfirmed
-                  ? "고시 유형 미확인 — 기타 재화로 등록"
-                  : (materials?.notice.noticeTypeName ?? materials?.notice.noticeType ?? "—")}
-              </span>
-            </div>
-            <div>
-              <b>이미지</b>
-              <span>
-                대표 1 · 추가 {galleryUrls.length} · 상세 {panelUrls.length}
-              </span>
-            </div>
-            {timings ? (
-              <div>
-                <b>소요</b>
-                <span className="mono">
-                  카테고리 {(timings.category / 1000).toFixed(1)}s · 재료 {(timings.materials / 1000).toFixed(1)}s ·
-                  상세 {(timings.detail / 1000).toFixed(1)}s · 등록 {(timings.register / 1000).toFixed(1)}s
-                </span>
-              </div>
-            ) : null}
-            <div>
-              <b>시각</b>
-              <span>{formatDate(listing.createdAt)}</span>
-            </div>
-          </div>
-        </section>
+          <ul className="rs-checks">
+            <li>원산지 {materials?.origin?.originAreaInfo?.content ?? "—"}</li>
+            {/* statusLabel 이 이미 "KC …" 로 시작한다 — 키를 덧붙이면 KC 가 두 번 나온다. */}
+            <li>KC {materials?.kc ? (KC_LABEL[materials.kc.status] ?? materials.kc.statusLabel) : "—"}</li>
+            <li>
+              고시{" "}
+              {materials?.notice?.typeUnconfirmed
+                ? "유형 미확인 — 기타 재화로 등록"
+                : (materials?.notice?.noticeTypeName ?? materials?.notice?.noticeType ?? "—")}
+            </li>
+            <li>
+              이미지 {(media?.galleryCount ?? gallery.length) + (media?.mainUrl ? 1 : 0)}장 · 상세 패널{" "}
+              {media?.panelCount ?? panelUrls.length}장
+            </li>
+          </ul>
+          {timings ? (
+            <p className="rs-timings">
+              카테고리 {(timings.category / 1000).toFixed(1)}s · 재료 {(timings.materials / 1000).toFixed(1)}s
+              · 상세 {(timings.detail / 1000).toFixed(1)}s · 등록 {(timings.register / 1000).toFixed(1)}s
+            </p>
+          ) : null}
+        </article>
       </div>
 
-      {previewOpen && materials?.media.detailPreviewUrl ? (
-        <div className="modal" onClick={() => setPreviewOpen(false)} role="presentation">
-          <div className="modal-frame" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="상세페이지 미리보기">
-            <div className="modal-bar">
-              상세페이지 미리보기
-              <button
-                type="button"
-                className="drawer-close"
-                onClick={() => setPreviewOpen(false)}
-                aria-label="닫기"
-              >
-                ✕
-              </button>
-            </div>
-            <iframe src={materials.media.detailPreviewUrl} title="상세페이지 미리보기" />
+      {showDetail && detailPreviewUrl ? (
+        <div className="detail-modal" role="dialog" aria-modal="true" onClick={() => setShowDetail(false)}>
+          <div className="detail-modal-frame" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="detail-modal-close" onClick={() => setShowDetail(false)}>
+              닫기
+            </button>
+            <iframe src={detailPreviewUrl} title="상세페이지 미리보기" />
           </div>
         </div>
       ) : null}
-    </div>
+    </section>
   );
-}
-
-export function useWarningList(listing: ListingRecord): string[] {
-  return useMemo(() => [...new Set(listing.warnings)], [listing.warnings]);
 }

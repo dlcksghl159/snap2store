@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  CheckCircleIcon,
+  ImageSquareIcon,
+  SpinnerGapIcon,
+  WarningCircleIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { createListing, fetchListing, fetchListings, formatDate, formatPrice } from "./api";
 import { PhoneLinkModal, PhoneStudio } from "./PhoneLink";
 import { usePhoneLink } from "./link-client";
 import { MissionControl, ResultShowcase } from "./Theater";
 import { FACT_KIND_LABEL, ROLE_LABEL } from "./stage-model";
-import type { ListingRecord } from "./domain/types";
+import type { ListingEvent, ListingMaterials, ListingRecord } from "./domain/types";
 
 const TERMINAL = new Set(["registered", "needs_review", "failed"]);
 const POLL_MS = 650;
@@ -23,9 +30,10 @@ const PHASE_RAIL = [
 
 type View = "upload" | "listings";
 
+/** 발사 전환 — 업로드 사진이 스테이지로 인수인계되는 비행 정보. */
 interface Flight {
-  rect: DOMRect;
-  url: string;
+  photo: string;
+  from: { left: number; top: number; width: number; height: number };
 }
 
 export default function App() {
@@ -39,7 +47,10 @@ export default function App() {
   const [listings, setListings] = useState<ListingRecord[]>([]);
   const [detailListing, setDetailListing] = useState<ListingRecord | null>(null);
   const [flight, setFlight] = useState<Flight | null>(null);
+  const [flightAborted, setFlightAborted] = useState(false);
   const [lingerDone, setLingerDone] = useState(false);
+  /** 무대에 아직 재생할 조립 연출이 남았는가 — 결과 화면 전환이 이걸 기다린다. */
+  const [revealPlaying, setRevealPlaying] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   const openedRef = useRef<string | null>(null);
@@ -128,14 +139,22 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [activeId, activeStatus]);
 
-  /* 종착 처리 — 유지 3.2초 뒤 결과 화면 */
   useEffect(() => {
     if (!activeStatus || !TERMINAL.has(activeStatus)) return;
     refreshListings();
-    if (activeStatus !== "registered") return;
+  }, [activeStatus, refreshListings]);
+
+  /*
+    종착 처리 — 유지 3.2초 뒤 결과 화면.
+    ⚠ 남은 조립 연출이 있으면 시계를 시작하지 않는다. 서버는 재료 완료 1~3초 뒤에
+    등록을 끝내는데 그때 무대에는 아직 재생할 카드가 남아 있다 — 여기서 곧바로
+    넘어가면 관객은 조립을 못 본 채 결과 화면을 맞는다.
+  */
+  useEffect(() => {
+    if (activeStatus !== "registered" || revealPlaying) return;
     const timer = window.setTimeout(() => setLingerDone(true), LINGER_MS);
     return () => window.clearTimeout(timer);
-  }, [activeStatus, refreshListings]);
+  }, [activeStatus, revealPlaying]);
 
   /* 실등록 완료 시 상품 페이지 자동 오픈 */
   useEffect(() => {
@@ -182,6 +201,7 @@ export default function App() {
   const resetRun = useCallback(() => {
     setActiveListing(null);
     setLingerDone(false);
+    setRevealPlaying(false);
     setDismissed(false);
     openedRef.current = null;
     replaceFiles([]);
@@ -197,10 +217,18 @@ export default function App() {
     setSubmitting(true);
     setError(null);
     setLingerDone(false);
+    setRevealPlaying(false);
     setDismissed(false);
+    setFlightAborted(false);
 
     const thumb = firstThumbRef.current;
-    if (thumb && previews[0]) setFlight({ rect: thumb.getBoundingClientRect(), url: previews[0] });
+    if (thumb && previews[0]) {
+      const rect = thumb.getBoundingClientRect();
+      setFlight({
+        photo: previews[0],
+        from: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      });
+    }
 
     try {
       const { id } = await createListing(files, note);
@@ -228,7 +256,8 @@ export default function App() {
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "등록을 시작하지 못했습니다.");
-      setFlight(null);
+      // 사진을 그냥 지우지 않는다 — 들어올렸던 클론이 제자리로 돌아가야 취소로 읽힌다.
+      setFlightAborted(true);
     } finally {
       setSubmitting(false);
     }
@@ -305,29 +334,34 @@ export default function App() {
       {controlVisible && activeListing ? (
         <MissionControl
           listing={activeListing}
+          onReview={() => {
+            setDismissed(true);
+            setView("listings");
+            setDetailListing(activeListing);
+            refreshListings();
+          }}
           onDismiss={() => {
             setDismissed(true);
             refreshListings();
           }}
-          onOpenList={() => {
-            setDismissed(true);
-            setView("listings");
-            refreshListings();
-          }}
+          onPlayingChange={setRevealPlaying}
         />
       ) : null}
 
       {flight ? (
         <LaunchOverlay
           flight={flight}
-          armed={controlVisible}
-          onDone={() => setFlight(null)}
-          failed={Boolean(error)}
+          stageMounted={controlVisible}
+          aborted={flightAborted}
+          onDone={() => {
+            setFlight(null);
+            setFlightAborted(false);
+          }}
         />
       ) : null}
 
       {detailListing ? (
-        <ListingDrawer listing={detailListing} onClose={() => setDetailListing(null)} />
+        <ListingDetail listing={detailListing} onClose={() => setDetailListing(null)} />
       ) : null}
 
       {link.phase === "creating" || link.phase === "waiting" ? (
@@ -590,154 +624,180 @@ function LandingView({
 
 /* ═════════ 발사 전환 ═════════ */
 
+/**
+ * `등록 시작` → 스테이지 진입 사이의 인수인계 연출.
+ * 업로드 사진이 들려 올라가 화면 중앙에 머물렀다가(전달 중), 스테이지가
+ * 마운트되면 좌하단 원본 슬롯으로 날아가 장착된다. 실패 시 제자리로 복귀.
+ *
+ * ⚠ 비행은 flight 1회당 **정확히 한 번**만 돌아야 한다. 부모(App)는 실행 중
+ * 650ms 폴링으로 계속 리렌더되므로 매 렌더 새로 만들어지는 콜백이 deps 에 들어가면
+ * 비행이 처음부터 다시 시작된다 — "사진이 무한히 날아가는" 사고의 원인.
+ */
 function LaunchOverlay({
   flight,
-  armed,
-  failed,
+  stageMounted,
+  aborted,
   onDone,
 }: {
   flight: Flight;
-  armed: boolean;
-  failed: boolean;
+  stageMounted: boolean;
+  aborted: boolean;
   onDone: () => void;
 }) {
-  const cloneRef = useRef<HTMLDivElement | null>(null);
-  const [veiled, setVeiled] = useState(false);
-  const [out, setOut] = useState(false);
-  const armedRef = useRef(armed);
-  const failedRef = useRef(failed);
+  const cloneRef = useRef<HTMLDivElement>(null);
+  const veilRef = useRef<HTMLDivElement>(null);
+  const captionRef = useRef<HTMLParagraphElement>(null);
+  const liftDoneAtRef = useRef(0);
+  const settledRef = useRef(false);
   const onDoneRef = useRef(onDone);
-  armedRef.current = armed;
-  failedRef.current = failed;
   onDoneRef.current = onDone;
 
-  /**
-   * ⚠ 이 이펙트는 비행 1회당 **정확히 한 번**만 돌아야 한다.
-   * 부모(App)는 실행 중 650ms 폴링으로 계속 리렌더되므로, onDone 같은
-   * 매 렌더 새 함수가 deps 에 들어가면 이펙트가 재실행되며 비행이 처음부터
-   * 다시 시작된다 — "사진이 무한히 날아가는" 사고의 원인. 콜백은 전부 ref 로 읽는다.
-   */
-  useEffect(() => {
-    const node = cloneRef.current;
-    if (!node) return;
-    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const onDone = () => onDoneRef.current();
-    // 화질 규칙: 클론은 최대(중앙) 크기로 레이아웃하고 transform 으로 축소해서 시작한다.
+  // 클론은 최대(중앙) 크기로 레이아웃하고 transform 으로 축소해서 시작한다 —
+  // 작은 크기로 래스터된 레이어를 확대하면 비행 내내 화질이 깨진다 (실측).
+  const [center] = useState(() => {
     const size = Math.min(window.innerHeight * 0.34, window.innerWidth * 0.3, 340);
+    return { size, x: window.innerWidth / 2, y: window.innerHeight * 0.44 };
+  });
 
-    const centerX = window.innerWidth / 2 - size / 2;
-    const centerY = window.innerHeight / 2 - size / 2;
-    const startScale = flight.rect.width / size;
-    const dx = flight.rect.left - centerX;
-    const dy = flight.rect.top - centerY;
+  const fromTransform = useCallback(() => {
+    const { from } = flight;
+    const dx = from.left + from.width / 2 - center.x;
+    const dy = from.top + from.height / 2 - center.y;
+    return `translate(${dx}px, ${dy}px) scale(${from.width / center.size})`;
+  }, [center, flight]);
 
-    node.style.width = `${size}px`;
-    node.style.height = `${size}px`;
-    node.style.left = `${centerX}px`;
-    node.style.top = `${centerY}px`;
-    node.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(${startScale})`;
+  /* 1) 들어올리기 — 원래 자리(축소 상태)에서 화면 중앙 원크기로. */
+  useEffect(() => {
+    const clone = cloneRef.current;
+    if (!clone) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      liftDoneAtRef.current = performance.now();
+      return;
+    }
+    clone.animate(
+      [{ transform: fromTransform() }, { transform: "translate(0px, 0px) scale(1)" }],
+      { duration: 560, easing: "cubic-bezier(0.23, 1, 0.32, 1)", fill: "forwards" },
+    );
+    liftDoneAtRef.current = performance.now() + 620;
+  }, [flight, fromTransform]);
 
-    if (reduced) {
-      setVeiled(true);
-      window.setTimeout(onDone, 60);
+  /* 2) 장착 또는 복귀. */
+  useEffect(() => {
+    if (!stageMounted && !aborted) return;
+    const clone = cloneRef.current;
+    const veil = veilRef.current;
+    if (!clone || !veil) return;
+    let raf = 0;
+    let tries = 0;
+    let cancelled = false;
+
+    const settle = (transform: string, flyMs: number) => {
+      if (cancelled || settledRef.current) return;
+      settledRef.current = true;
+      captionRef.current?.animate([{ opacity: 0 }], {
+        duration: 180,
+        easing: "ease-in",
+        fill: "forwards",
+      });
+      const animation = clone.animate([{ transform, opacity: 0 }], {
+        duration: flyMs,
+        easing: "cubic-bezier(0.645, 0.045, 0.355, 1)",
+        fill: "forwards",
+      });
+      const finish = () => {
+        if (cancelled) return;
+        const fade = veil.animate([{ opacity: 0 }], {
+          duration: aborted ? 220 : 300,
+          easing: "ease-in",
+          fill: "forwards",
+        });
+        fade.onfinish = () => onDoneRef.current();
+        fade.oncancel = () => onDoneRef.current();
+      };
+      animation.onfinish = finish;
+      animation.oncancel = finish;
+    };
+
+    if (aborted) {
+      settle(fromTransform(), 340);
       return;
     }
 
-    setVeiled(true);
-    let cancelled = false;
-    let frames = 0;
-
-    const rise = node.animate(
-      [
-        { transform: `translate3d(${dx}px, ${dy}px, 0) scale(${startScale})` },
-        { transform: "translate3d(0, 0, 0) scale(1)" },
-      ],
-      { duration: 560, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "both" },
-    );
-
-    const land = () => {
-      if (cancelled) return;
-
-      if (failedRef.current) {
-        // POST 실패 시 제자리 복귀
-        node
-          .animate(
-            [
-              { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
-              { transform: `translate3d(${dx}px, ${dy}px, 0) scale(${startScale})`, opacity: 0 },
-            ],
-            { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "both" },
-          )
-          .finished.finally(() => {
-            setOut(true);
-            window.setTimeout(onDone, 300);
-          });
+    const seek = () => {
+      if (cancelled || settledRef.current) return;
+      const target = document.querySelector<HTMLElement>(
+        '.stage [data-launch-target="evidence"] img, .stage [data-launch-target="evidence"]',
+      );
+      const ready = target && target.getBoundingClientRect().width > 0;
+      if (!ready || performance.now() < liftDoneAtRef.current) {
+        if (++tries < 600) raf = requestAnimationFrame(seek);
+        else settle("translate(0px, 0px) scale(1)", 300);
         return;
       }
-
-      const target = document.querySelector<HTMLElement>('.stage [data-launch-target="evidence"]');
-      if (!target && frames < 600) {
-        frames += 1;
-        requestAnimationFrame(land);
-        return;
-      }
-      if (!target) {
-        setOut(true);
-        window.setTimeout(onDone, 300);
-        return;
-      }
-
       const to = target.getBoundingClientRect();
-      const scale = Math.min(1, to.width / size);
-      const tx = to.left + to.width / 2 - (centerX + size / 2);
-      const ty = to.top + to.height / 2 - (centerY + size / 2);
-
-      node
-        .animate(
-          [
-            { transform: "translate3d(0, 0, 0) scale(1)", opacity: 1 },
-            { transform: `translate3d(${tx}px, ${ty}px, 0) scale(${scale})`, opacity: 0.9 },
-          ],
-          { duration: 540, easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "both" },
-        )
-        .finished.finally(() => {
-          if (cancelled) return;
-          setOut(true);
-          window.setTimeout(onDone, 300);
-        });
+      const dx = to.left + to.width / 2 - center.x;
+      const dy = to.top + to.height / 2 - center.y;
+      settle(`translate(${dx}px, ${dy}px) scale(${to.width / center.size})`, 540);
     };
-
-    void rise.finished.finally(land);
-
+    raf = requestAnimationFrame(seek);
     return () => {
       cancelled = true;
+      cancelAnimationFrame(raf);
     };
-  }, [flight]);
+  }, [stageMounted, aborted, flight, center, fromTransform]);
 
   return (
-    <div className={`launch ${veiled && !out ? "veiled" : ""} ${out ? "out" : ""}`} aria-hidden>
-      <div ref={cloneRef} className="launch-clone">
-        <img src={flight.url} alt="" />
+    <div className="launch" role="status" aria-label="에이전트에게 전달 중">
+      <div ref={veilRef} className="launch-veil" />
+      <div
+        ref={cloneRef}
+        className="launch-clone"
+        style={{
+          left: center.x - center.size / 2,
+          top: center.y - center.size / 2,
+          width: center.size,
+          height: center.size,
+          transform: fromTransform(),
+        }}
+      >
+        <img src={flight.photo} alt="" />
       </div>
+      <p ref={captionRef} className="launch-caption">
+        에이전트에게 전달하고 있어요
+      </p>
     </div>
   );
 }
 
-/* ═════════ 목록 ═════════ */
+/* ═════════ 올린 물건 ═════════ */
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case "registered":
-      return "등록";
-    case "needs_review":
-      return "보고";
-    case "failed":
-      return "실패";
-    case "running":
-      return "진행 중";
-    default:
-      return "대기";
+function statusLabel(listing: ListingRecord): string {
+  if (listing.status === "registered") {
+    if (listing.publication?.mode === "live" && listing.publication?.liveStatus === "registered") {
+      return "등록 완료";
+    }
+    // 스토어 POST 까지 가지 못한 런 — 실행 모드가 아니라 결과를 말한다.
+    return "등록안 완성";
   }
+  if (listing.status === "needs_review") return "검토 필요";
+  if (listing.status === "failed") return "실패";
+  return "등록 중";
+}
+
+function ListingStatus({ listing }: { listing: ListingRecord }) {
+  const pending = listing.status === "queued" || listing.status === "running";
+  const Icon =
+    listing.status === "registered"
+      ? CheckCircleIcon
+      : listing.status === "needs_review" || listing.status === "failed"
+        ? WarningCircleIcon
+        : SpinnerGapIcon;
+  return (
+    <span className={`status-pill status-${listing.status}`}>
+      <Icon className={pending ? "spin" : ""} size={14} weight="fill" aria-hidden="true" />
+      {statusLabel(listing)}
+    </span>
+  );
 }
 
 function ListingsView({
@@ -750,228 +810,255 @@ function ListingsView({
   onNew: () => void;
 }) {
   return (
-    <main className="list">
-      <div className="list-head">
+    <main className="library">
+      <div className="library-head">
         <h1>올린 물건</h1>
-        <span className="tnum">{listings.length}건</span>
-        <button type="button" className="btn btn-ghost" style={{ marginLeft: "auto" }} onClick={onNew}>
-          새 상품 올리기
-        </button>
+        <p>등록 결과만 간단히 확인하세요</p>
       </div>
 
       {listings.length === 0 ? (
-        <div className="empty">
-          <b>아직 올린 물건이 없습니다</b>
-          <span>사진 한 장이면 등록까지 끝납니다.</span>
+        <section className="library-empty">
+          <ImageSquareIcon size={40} weight="light" aria-hidden="true" />
+          <h2>아직 올린 물건이 없어요</h2>
           <button type="button" className="btn btn-primary" onClick={onNew}>
-            물건 올리기 <span className="arrow">→</span>
+            첫 물건 올리기
           </button>
-        </div>
+        </section>
       ) : (
-        <div className="list-grid">
-          {listings.map((listing, index) => {
+        <section className="library-grid" aria-label="올린 물건 목록">
+          {listings.map((listing) => {
             const image = listing.materials?.media.mainUrl ?? listing.photoUrls[0] ?? null;
             return (
-              <button
-                type="button"
-                className="list-card"
-                key={listing.id}
-                style={{ "--i": index } as React.CSSProperties}
-                onClick={() => onOpen(listing)}
-              >
-                <div className="list-thumb">
-                  {image ? <img src={image} alt="" /> : <div className="skeleton" style={{ height: "100%" }} />}
+              <button className="item" type="button" key={listing.id} onClick={() => onOpen(listing)}>
+                <div className="item-img">
+                  {image ? (
+                    <img src={image} alt="" />
+                  ) : (
+                    <ImageSquareIcon size={34} weight="light" aria-hidden="true" />
+                  )}
                 </div>
-                <div className="list-meta">
-                  <span className={`status-pill ${listing.status}`}>{statusLabel(listing.status)}</span>
-                  <span className="list-title">
-                    {listing.materials?.registrationTitle ?? listing.draft?.title ?? "등록안 준비 중"}
-                  </span>
-                  <span className="list-row">
-                    {formatPrice(listing.materials?.price.salePrice ?? listing.draft?.salePrice)}
+                <div className="item-body">
+                  <div className="item-meta">
+                    <ListingStatus listing={listing} />
                     <time dateTime={listing.createdAt}>{formatDate(listing.createdAt)}</time>
-                  </span>
+                  </div>
+                  <h2>
+                    {listing.materials?.registrationTitle ?? listing.draft?.title ?? "등록안 준비 중"}
+                  </h2>
+                  <p>{formatPrice(listing.materials?.price.salePrice ?? listing.draft?.salePrice)}</p>
                 </div>
               </button>
             );
           })}
-        </div>
+        </section>
       )}
     </main>
   );
 }
 
-/* ═════════ 드로어 ═════════ */
+/* ═════════ 상세 드로어 ═════════ */
 
-function ListingDrawer({ listing, onClose }: { listing: ListingRecord; onClose: () => void }) {
-  const materials = listing.materials;
-  const publication = listing.publication;
+function EventRow({ event }: { event: ListingEvent }) {
+  return (
+    <li>
+      <div className="event-line">
+        <time>{new Date(event.at).toLocaleTimeString("ko-KR", { hour12: false })}</time>
+        <span>{event.source}</span>
+        <strong>{event.label}</strong>
+      </div>
+      {event.payload ? <pre>{JSON.stringify(event.payload, null, 2)}</pre> : null}
+    </li>
+  );
+}
+
+function MaterialsSection({ materials }: { materials: ListingMaterials }) {
+  const rows: Array<{ label: string; value: string; ok: boolean | null }> = [
+    {
+      label: "카테고리",
+      value: materials.category.categoryName ?? "미확정",
+      ok: materials.category.categoryId ? materials.category.verified : false,
+    },
+    {
+      label: "판매가 근거",
+      value: materials.price.priceBasis,
+      ok: materials.price.resolved,
+    },
+    {
+      label: "원산지",
+      value: materials.origin.originAreaInfo?.content ?? (materials.origin.reviewReason ?? "미확정"),
+      ok: materials.origin.resolved,
+    },
+    { label: "KC 인증", value: materials.kc.statusLabel, ok: !materials.kc.blocking },
+    {
+      label: "정보제공고시",
+      value: materials.notice.typeUnconfirmed
+        ? "유형 미확인 — 기타 재화로 등록"
+        : (materials.notice.noticeTypeName ?? materials.notice.noticeType),
+      ok: !materials.notice.usedFallbackType,
+    },
+    {
+      label: "태그",
+      value:
+        materials.tags.tags.length > 0
+          ? materials.tags.tags.map((tag) => `${tag.text}${tag.official ? "" : "*"}`).join(", ")
+          : "없음",
+      ok: materials.tags.tags.length > 0,
+    },
+  ];
 
   return (
-    <>
-      <div className="drawer-backdrop" onClick={onClose} role="presentation" />
-      <aside className="drawer" role="dialog" aria-label="등록 상세">
-        <div className="drawer-bar">
-          <span className={`status-pill ${listing.status}`}>{statusLabel(listing.status)}</span>
-          <b>{materials?.registrationTitle ?? listing.draft?.title ?? "등록안"}</b>
-          <button type="button" className="drawer-close" onClick={onClose} aria-label="닫기">
-            ✕
-          </button>
-        </div>
-
-        <div className="drawer-body">
-          {listing.draft?.summary ? (
-            <section className="dsec">
-              <h3>요약</h3>
-              <p className="rs-sub">{listing.draft.summary}</p>
-            </section>
-          ) : null}
-
-          <section className="dsec">
-            <h3>사실</h3>
-            <div className="rs-kv">
-              <div>
-                <b>판매가</b>
-                <span>{formatPrice(materials?.price.salePrice ?? listing.draft?.salePrice)}</span>
-              </div>
-              <div>
-                <b>카테고리</b>
-                <span>{materials?.category.categoryName ?? "미확정"}</span>
-              </div>
-              {publication?.originProductNo ? (
-                <div>
-                  <b>등록번호</b>
-                  <span className="mono">
-                    {publication.originProductNo} / {publication.channelProductNo ?? "—"}
-                  </span>
-                </div>
-              ) : null}
-              <div>
-                <b>진행상태</b>
-                <span>{listing.stageLabel}</span>
-              </div>
-              {publication?.productUrl ? (
-                <div>
-                  <b>링크</b>
-                  <span className="wrap-any">
-                    <a href={publication.productUrl} target="_blank" rel="noreferrer" style={{ color: "var(--blue)" }}>
-                      스마트스토어에서 보기 ↗
-                    </a>
-                  </span>
-                </div>
-              ) : null}
+    <section className="drawer-section">
+      <h3>등록 재료</h3>
+      <ul className="materials-list">
+        {rows.map((row) => (
+          <li key={row.label}>
+            <span className={row.ok === false ? "material-flag material-flag-warn" : "material-flag"}>
+              {row.ok === false ? "!" : "✓"}
+            </span>
+            <div>
+              <strong>{row.label}</strong>
+              <p>{row.value}</p>
             </div>
-          </section>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
-          {listing.blockReasons.length > 0 || (publication?.holdReasons?.length ?? 0) > 0 ? (
-            <section className="dsec">
-              <h3>판정 · 보류 사유</h3>
-              <div className="rs-hold">
-                <ul>
-                  {[...listing.blockReasons, ...(publication?.holdReasons ?? [])].map((reason, index) => (
-                    <li key={index}>{reason}</li>
-                  ))}
-                </ul>
+function ListingDetail({ listing, onClose }: { listing: ListingRecord; onClose: () => void }) {
+  const materials = listing.materials;
+  const publication = listing.publication;
+  const plan = materials?.detailPlan ?? null;
+  const image = materials?.media.mainUrl ?? listing.photoUrls[0] ?? null;
+  const holdReasons = publication?.holdReasons ?? [];
+
+  return (
+    <div className="detail-backdrop" role="presentation" onMouseDown={onClose}>
+      <aside
+        className="detail-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detail-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button className="drawer-close" type="button" onClick={onClose} aria-label="닫기" autoFocus>
+          <XIcon size={20} weight="bold" aria-hidden="true" />
+        </button>
+        <div className="detail-hero">{image ? <img src={image} alt="" /> : null}</div>
+        <div className="detail-content">
+          <ListingStatus listing={listing} />
+          <h2 id="detail-title">
+            {materials?.registrationTitle ?? listing.draft?.title ?? "등록안 준비 중"}
+          </h2>
+          {listing.draft?.summary ? <p className="detail-summary">{listing.draft.summary}</p> : null}
+          <dl className="detail-facts">
+            <div>
+              <dt>판매가</dt>
+              <dd>{formatPrice(materials?.price.salePrice ?? listing.draft?.salePrice)}</dd>
+            </div>
+            <div>
+              <dt>카테고리</dt>
+              <dd>{materials?.category.leafName ?? materials?.category.categoryName ?? "확인 중"}</dd>
+            </div>
+            <div>
+              <dt>등록 번호</dt>
+              <dd className="mono">{publication?.channelProductNo ?? publication?.originProductNo ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>진행 상태</dt>
+              <dd>{listing.stageLabel}</dd>
+            </div>
+            {publication?.productUrl ? (
+              <div>
+                <dt>상품 링크</dt>
+                <dd className="wrap-any">
+                  <a href={publication.productUrl} target="_blank" rel="noreferrer">
+                    스마트스토어에서 보기
+                  </a>
+                </dd>
               </div>
-            </section>
-          ) : null}
+            ) : null}
+          </dl>
 
-          {materials?.detailPlan ? (
-            <section className="dsec">
-              <h3>상세 기획</h3>
-              <p className="rs-quote" style={{ fontSize: 15 }}>
-                “{materials.detailPlan.concept}”
-              </p>
-              <p className="rs-sub">{materials.detailPlan.angle}</p>
-              <div className="rs-roles">
-                {materials.detailPlan.sections.map((section, index) => (
-                  <div className="rs-role" key={index}>
-                    <u>{ROLE_LABEL[section.role] ?? section.role}</u>
-                    <span>{section.heading}</span>
-                    <i className={section.panel ? "on" : ""} />
-                  </div>
+          {listing.blockReasons.length > 0 ? (
+            <section className="drawer-section resolution-panel">
+              <h3>에이전트 판정</h3>
+              <ul className="block-reasons">
+                {listing.blockReasons.map((reason, index) => (
+                  <li key={index}>{reason}</li>
                 ))}
-              </div>
+              </ul>
             </section>
           ) : null}
 
-          {materials ? (
-            <section className="dsec">
-              <h3>등록 재료</h3>
-              <div className="rs-kv">
-                <div>
-                  <b>원산지</b>
-                  <span>{materials.origin.originAreaInfo?.content ?? "—"}</span>
-                </div>
-                <div>
-                  <b>KC</b>
-                  <span>{materials.kc.statusLabel}</span>
-                </div>
-                <div>
-                  <b>고시</b>
-                  <span>
-                    {materials.notice.typeUnconfirmed
-                      ? "고시 유형 미확인 — 기타 재화로 등록"
-                      : (materials.notice.noticeTypeName ?? materials.notice.noticeType)}
-                  </span>
-                </div>
-                <div>
-                  <b>가격 근거</b>
-                  <span>{materials.price.priceBasis}</span>
-                </div>
-              </div>
-              <div className="tag-row" style={{ gap: 6, marginTop: 4 }}>
-                {materials.tags.tags.map((tag) => (
-                  <span key={tag.text} className={`tag-chip ${tag.official ? "" : "unofficial"}`}>
-                    {tag.text}
-                  </span>
+          {holdReasons.length > 0 ? (
+            <section className="drawer-section resolution-panel">
+              <h3>실등록 보류 사유 (등록안은 완성됨)</h3>
+              <ul className="block-reasons">
+                {holdReasons.map((reason, index) => (
+                  <li key={index}>{reason}</li>
                 ))}
-              </div>
+              </ul>
             </section>
           ) : null}
+
+          {plan ? (
+            <section className="drawer-section">
+              <h3>상세페이지 기획</h3>
+              <p className="drawer-concept">“{plan.concept}”</p>
+              <p className="drawer-angle">{plan.angle}</p>
+              <ol className="drawer-sections">
+                {plan.sections.map((section, index) => (
+                  <li key={`${section.role}-${index}`}>
+                    <span>{ROLE_LABEL[section.role] ?? section.role}</span>
+                    {section.heading}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
+
+          {materials ? <MaterialsSection materials={materials} /> : null}
 
           {listing.draft?.facts?.length ? (
-            <section className="dsec">
+            <section className="drawer-section">
               <h3>판단 근거</h3>
-              {listing.draft.facts.map((fact, index) => (
-                <div className="dfact" key={index}>
-                  <div className="dfact-top">
-                    <span className={`fact-kind ${fact.kind}`}>{FACT_KIND_LABEL[fact.kind] ?? fact.kind}</span>
-                    <span className="dfact-src tnum">{Math.round(fact.confidence * 100)}%</span>
-                  </div>
-                  <div className="dfact-claim">{fact.claim}</div>
-                  <div className="dfact-src">{fact.source}</div>
-                </div>
-              ))}
+              <ul className="evidence-list">
+                {listing.draft.facts.map((fact, index) => (
+                  <li key={`${fact.claim}-${index}`}>
+                    <span className={`fact-kind fact-${fact.kind}`}>
+                      {FACT_KIND_LABEL[fact.kind] ?? fact.kind}
+                    </span>
+                    <p>{fact.claim}</p>
+                    <small>{fact.source}</small>
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
 
           {listing.warnings.length > 0 ? (
-            <section className="dsec">
+            <section className="drawer-section">
               <h3>경고</h3>
-              {listing.warnings.map((warning, index) => (
-                <div className="dfact" key={index}>
-                  <div className="dfact-claim">{warning}</div>
-                </div>
-              ))}
+              <ul className="block-reasons">
+                {[...new Set(listing.warnings)].map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
             </section>
           ) : null}
 
-          <section className="dsec">
-            <details>
-              <summary>Agent stream ({listing.events.length}건)</summary>
-              <div className="dlog">
-                {listing.events.map((event) => (
-                  <div key={event.id}>
-                    <b className={event.kind}>{event.kind}</b>
-                    <span className="wrap-any">{event.label}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          </section>
+          <details className="agent-stream">
+            <summary>Agent stream · {listing.events.length}</summary>
+            <ul>
+              {listing.events.map((event) => (
+                <EventRow key={event.id} event={event} />
+              ))}
+            </ul>
+          </details>
         </div>
       </aside>
-    </>
+    </div>
   );
 }

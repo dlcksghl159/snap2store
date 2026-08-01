@@ -1,4 +1,7 @@
 import { searchComparableListings } from "../naver/openapi.js";
+// 가격 정책은 프론트와 공유한다 — 무대가 띄우는 정가·할인율이 등록값과 같아야 한다.
+export { planDiscount, DEFAULT_DISCOUNT_RATE } from "../../src/domain/pricing.js";
+export type { DiscountPlan } from "../../src/domain/pricing.js";
 import type { SellerConfig } from "../seller-config.js";
 import type { PriceDistribution, PriceResolution, ShoppingSearchItem } from "../../src/domain/types";
 
@@ -65,6 +68,7 @@ export function applyDisplayUnit(price: number, displayUnit: number, minSalePric
   const rounded = Math.ceil(price / unit) * unit;
   return Math.max(minSalePrice, rounded);
 }
+
 
 export interface ResolvePriceInput {
   comps: ShoppingSearchItem[];

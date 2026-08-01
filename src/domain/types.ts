@@ -114,11 +114,18 @@ export interface PriceDistribution {
 
 export interface PriceResolution {
   resolved: boolean;
+  /** 고객이 실제로 내는 값. 할인이 걸려도 이 숫자는 움직이지 않는다. */
   salePrice: number;
   priceBasis: string;
   source: "market_distribution" | "agent_estimate" | "seller_input" | "floor";
   sampleSize: number;
   distribution: PriceDistribution | null;
+  /** 정가 — 등록 페이로드의 originProduct.salePrice. 할인이 없으면 salePrice 와 같다. */
+  listPrice?: number;
+  /** 즉시할인액(원). 0 이면 할인 없음. */
+  discountKrw?: number;
+  /** 실제 할인율(%) — 반올림된 표기값이 아니라 등록된 금액에서 나온 값. */
+  discountRate?: number;
 }
 
 /* ── 재료 ────────────────────────────────────────────────────── */

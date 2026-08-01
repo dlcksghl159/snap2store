@@ -229,6 +229,28 @@ export function repairPayloadAfter400(
         continue;
       }
     }
+    /*
+      ⚠ 즉시할인이 거절되면 **할인만 떼고 끝내면 안 된다**. 등록된 salePrice 는 정가라
+      고객이 의도가보다 비싸게 사게 된다. 할인액을 되돌려 고객가로 낮춘 뒤 정책을 버린다.
+    */
+    if (name.includes("customerBenefit") || name.includes("immediateDiscount") || name.includes("discount")) {
+      const benefit = origin ? asObject(origin.customerBenefit) : null;
+      const policy = benefit ? asObject(benefit.immediateDiscountPolicy) : null;
+      const method = policy ? asObject(policy.discountMethod) : null;
+      if (origin && method && typeof method.value === "number" && typeof origin.salePrice === "number") {
+        origin.salePrice = Math.max(100, origin.salePrice - method.value);
+        delete origin.customerBenefit;
+        notes.push("즉시할인 제거 — 고객가로 환원");
+        fixedAny = true;
+        continue;
+      }
+      if (origin && origin.customerBenefit) {
+        delete origin.customerBenefit;
+        notes.push("즉시할인 제거");
+        fixedAny = true;
+        continue;
+      }
+    }
     if (name.includes("salePrice")) {
       if (origin && typeof origin.salePrice === "number") {
         origin.salePrice = Math.max(1000, Math.round(origin.salePrice / 100) * 100);

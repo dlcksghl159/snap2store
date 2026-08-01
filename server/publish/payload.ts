@@ -81,7 +81,12 @@ export interface BuildPayloadInput {
   representativeImageUrl: string;
   optionalImageUrls: string[];
   detailContent: string;
+  /** 고객이 실제로 내는 값 — 반품비 산정과 화면 표기의 기준. */
   salePrice: number;
+  /** 정가. 즉시할인을 걸 때만 salePrice 보다 크다. */
+  listPrice?: number;
+  /** 즉시할인액(원). */
+  discountKrw?: number;
   stockQuantity: number;
   config: SellerConfig;
   notice: Record<string, unknown>;
@@ -95,7 +100,10 @@ export interface BuildPayloadInput {
 
 export function buildProductPayload(input: BuildPayloadInput): Record<string, unknown> {
   const { config } = input;
+  // 반품·교환비는 고객이 내는 값 기준이다 — 정가로 잡으면 실제보다 비싼 구간이 걸린다.
   const claimFee = calcReturnExchangeFeeKrw(input.salePrice);
+  const listPrice = input.listPrice ?? input.salePrice;
+  const discountKrw = Math.max(0, Math.round(input.discountKrw ?? 0));
   const optional = input.optionalImageUrls.filter(Boolean);
 
   const purchaseQuantityInfo =
@@ -118,7 +126,20 @@ export function buildProductPayload(input: BuildPayloadInput): Record<string, un
           : {}),
       },
       detailContent: input.detailContent,
-      salePrice: input.salePrice,
+      /*
+        즉시할인을 걸면 등록되는 salePrice 는 **정가**이고, 고객가는 할인 차감 후 값이다.
+        할인이 없으면 둘이 같다.
+      */
+      salePrice: discountKrw > 0 ? listPrice : input.salePrice,
+      ...(discountKrw > 0
+        ? {
+            customerBenefit: {
+              immediateDiscountPolicy: {
+                discountMethod: { value: discountKrw, unitType: "WON" },
+              },
+            },
+          }
+        : {}),
       stockQuantity: input.stockQuantity,
       deliveryInfo: {
         deliveryType: "DELIVERY",

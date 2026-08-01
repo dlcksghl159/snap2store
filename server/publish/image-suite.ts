@@ -5,14 +5,17 @@ import sharp from "sharp";
 import { z } from "zod";
 import { env } from "../env.js";
 import { appendEvent } from "../events.js";
-import { requestOpenAiJson, strictObject } from "../ai/openai-json.js";
+import { requestOpenAiJson, softMaxString, strictObject } from "../ai/openai-json.js";
 import { sleep } from "../commerce/http.js";
 import { ensureListingAssetDirectory, listingAssetUrl } from "../store.js";
 import type { SellerConfig } from "../seller-config.js";
 import type { ImageSuiteResult, ShotKind, SpecFact, SuiteImage } from "../../src/domain/types";
 
-/** 갤러리 샷 동시 생성 — 429 는 SDK retry-after 가 흡수한다. */
-const GEN_CONCURRENCY = 4;
+/**
+ * 샷 동시 생성 상한 — 한 런의 전 샷을 **한 번에** 띄우고도 남는 값이다.
+ * 이 상한은 이제 병목이 아니다(런당 샷 수가 곧 동시 수). 429 는 SDK retry-after 가 흡수한다.
+ */
+const GEN_CONCURRENCY = 12;
 /** ⚠ 816×816 은 gpt-image-2 의 최소 유효 정사각이다 (16의 배수 & 655,360px 이상). */
 const GALLERY_SIZE = "816x816";
 const MAIN_SIZE = "1024x1024";
@@ -63,9 +66,10 @@ lighting, high detail.`;
 
 const SHOT_KINDS = ["main_studio", "alt_studio", "lifestyle", "usage", "closeup", "mood"] as const;
 
+/* scene 은 자유 서술이다 — 길이 초과로 샷 플랜 전체를 버리지 않는다(softMaxString). */
 const ShotPlanSchema = z.object({
   shots: z
-    .array(z.object({ kind: z.enum(SHOT_KINDS), scene: z.string().max(300) }))
+    .array(z.object({ kind: z.enum(SHOT_KINDS), scene: softMaxString(300) }))
     .min(1)
     .max(8),
 });
@@ -75,7 +79,10 @@ const SHOT_PLAN_JSON_SCHEMA = strictObject({
     type: "array",
     items: strictObject({
       kind: { type: "string", enum: [...SHOT_KINDS] },
-      scene: { type: "string", description: "영어로. 배경·환경·소품·조명·구도를 구체적으로." },
+      scene: {
+        type: "string",
+        description: "영어로. 배경·환경·소품·조명·구도를 구체적으로. 300자 이내.",
+      },
     }),
   },
 });
@@ -291,7 +298,11 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
 
   const results: (ShotResult | null)[] = new Array(shots.length).fill(null);
   const failed = new Set<number>();
-  /** 대표 컷이 완성되면 나머지 샷의 정체성 앵커로 재사용한다. */
+  /**
+   * 대표 컷이 완성되면 나머지 샷의 정체성 앵커로 재사용한다.
+   * ⚠ 이제 전 샷이 동시에 출발하므로 대부분의 샷은 앵커 없이 시작한다 — 기다리지 않는다.
+   *   재시도로 뒤늦게 도는 샷과 상세 패널이 이 값의 실수요자다.
+   */
   let anchor: PreparedReference | null = null;
 
   const renderShot = async (index: number): Promise<void> => {
@@ -351,17 +362,18 @@ export async function generateImageSuite(input: GenerateImageSuiteInput): Promis
     }
   };
 
-  /**
-   * 대표 컷을 먼저 만든다 — 나머지 샷과 상세 패널이 이걸 앵커로 삼아야 일관성이 유지된다.
-   * ⚠ 대표에 **전용 서브예산**을 준다. 전체 예산을 대표가 다 쓰면 갤러리까지 통째로
-   *   건너뛰고 결국 "원본 사진으로 등록"까지 떨어진다 — 실제로 그렇게 터졌다.
-   */
-  const mainBudget = Math.max(20_000, Math.floor(budget * 0.55));
-  await Promise.race([renderShot(0), sleep(mainBudget)]);
+  /*
+    ⚠ 전 샷을 **한 번에** 쏜다. 벽시계는 샷 하나치가 된다.
 
-  // 대표가 낙오해도 갤러리는 반드시 돈다 — 생성 이미지 하나도 없는 상태로 끝내지 않는다.
-  if (!input.signal?.aborted && shots.length > 1 && budgetLeft() > 6_000) {
-    const queue = shots.map((_, index) => index).slice(1);
+    예전에는 대표를 먼저 끝낸 뒤(정체성 앵커) 갤러리를 돌렸다. 그런데 대표는
+    mainQuality 로 굽히므로 medium 이면 그 자체로 51초다(실측 50.4/52.7s) — 갤러리는
+    그때까지 아무것도 못 했고, 대표 서브예산은 최대 66초까지 잡혀 있었다.
+    앵커는 "이미 완성돼 있으면 쓴다"로 낮춘다. 갤러리도 어차피 판매자가 올린 같은
+    참조 사진 전부를 보고 그리므로, 정체성의 1차 근거는 그대로다.
+    (상세 패널은 다르다 — 거기서는 앵커를 **기다린다**. orchestrator 의 HERO_WAIT_MS.)
+  */
+  if (!input.signal?.aborted) {
+    const queue = shots.map((_, index) => index);
     const workers = Array.from({ length: Math.min(GEN_CONCURRENCY, queue.length) }, async () => {
       while (queue.length > 0) {
         const index = queue.shift();

@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { z } from "zod";
+import { z } from "zod";
 import { env } from "../env.js";
 
 let client: OpenAI | null = null;
@@ -89,6 +89,39 @@ function extractText(response: unknown): string {
     return chunks.join("");
   }
   return "";
+}
+
+/**
+ * 창작 텍스트의 길이 상한 — **자르되 버리지 않는다**.
+ *
+ * ⚠ OpenAI 구조화 출력의 JSON Schema 는 `maxLength` 를 강제하지 않는다. 글자수는
+ * description 으로 부탁하는 것이 전부라서 모델은 일상적으로 몇 십 자를 넘긴다.
+ * 그 필드에 `z.string().max(n)` 을 걸면 초과 한 건이 **응답 전체**를 폐기시킨다 —
+ * 실측으로 sceneHint 6개가 160자를 넘겨 상세 기획(컨셉·서사·패널 8섹션)이
+ * 통째로 사라졌고, 그 런은 상세페이지 없이 등록됐다.
+ *
+ * 길이는 취향이고 구조(역할·개수·enum)는 계약이다. 취향 위반으로 계약을 깨지 않는다.
+ */
+export function softMaxString(max: number) {
+  return z.string().transform((value) => clipText(value, max));
+}
+
+/** 문장 끝 → 어절 끝 순으로 물러나며 자른다. 너무 많이 잘려 나가면 그냥 상한에서 끊는다. */
+export function clipText(value: string, max: number): string {
+  const text = value.trim();
+  if (text.length <= max) return text;
+  const head = text.slice(0, max);
+  const floor = max * 0.6;
+  const sentence = Math.max(
+    head.lastIndexOf("."),
+    head.lastIndexOf("!"),
+    head.lastIndexOf("?"),
+    head.lastIndexOf("。"),
+  );
+  if (sentence >= floor) return head.slice(0, sentence + 1).trim();
+  const space = head.lastIndexOf(" ");
+  if (space >= floor) return head.slice(0, space).trim();
+  return head.trim();
 }
 
 /** strict JSON Schema 헬퍼 — required 는 전 필드, additionalProperties 는 false 여야 한다. */

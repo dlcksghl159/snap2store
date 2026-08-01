@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { requestOpenAiJson, strictObject } from "../ai/openai-json.js";
+import { requestOpenAiJson, softMaxString, strictObject } from "../ai/openai-json.js";
 import type { DetailPlan, DetailSection, SpecFact } from "../../src/domain/types";
 
 const ROLES = [
@@ -13,30 +13,34 @@ const ROLES = [
   "closing",
 ] as const;
 
+/*
+  ⚠ 자유 서술 필드는 전부 softMaxString — 길이 초과로 기획 전체를 버리지 않는다.
+  구조(role enum · 섹션 4~8개 · hooks 3~4개)만 하드 계약으로 남긴다.
+*/
 const PlanSchema = z.object({
-  concept: z.string().max(60),
-  angle: z.string().max(80),
-  headline: z.string().max(40),
-  subheadline: z.string().max(70),
-  hooks: z.array(z.object({ label: z.string().max(12), value: z.string().max(30) })).min(3).max(4),
+  concept: softMaxString(60),
+  angle: softMaxString(80),
+  headline: softMaxString(40),
+  subheadline: softMaxString(70),
+  hooks: z.array(z.object({ label: softMaxString(12), value: softMaxString(30) })).min(3).max(4),
   sections: z
     .array(
       z.object({
         role: z.enum(ROLES),
-        heading: z.string().max(34),
-        body: z.string().max(340),
+        heading: softMaxString(34),
+        body: softMaxString(340),
         panel: z
           .object({
-            headline: z.string().max(14),
-            subline: z.string().max(26),
-            sceneHint: z.string().max(160),
+            headline: softMaxString(14),
+            subline: softMaxString(26),
+            sceneHint: softMaxString(160),
           })
           .nullable(),
       }),
     )
     .min(4)
     .max(8),
-  closing: z.string().max(90),
+  closing: softMaxString(90),
 });
 
 const PLAN_JSON_SCHEMA = strictObject({
@@ -102,8 +106,11 @@ function buildSystem(panelTarget: number, evidenceRich: boolean): string {
 패널 설계: 정확히 ${panelTarget}개 섹션에 panel(세로 이미지 연출)을 설계합니다 —
 hook 섹션은 반드시 포함. panel.headline(≤14자)과 panel.subline(≤26자)은 이미지 위에
 그대로 인쇄될 한글 문구입니다: 짧고 강하게, 맞춤법 완벽하게, 이 기획에 있는 사실·
-표현만. sceneHint는 영어로 그 섹션의 장면을 구체적으로 묘사합니다(배경·소품·조명·구도).
+표현만. sceneHint는 영어로 그 섹션의 장면을 묘사합니다(배경·소품·조명·구도) —
+**160자를 넘기지 마세요**. 한 문장으로 압축하고 형용사를 아끼면 충분히 들어갑니다.
 나머지 섹션은 panel: null.
+
+글자수 상한은 전부 지켜야 합니다. 넘기면 뒷부분이 잘려 문장이 끊깁니다.
 
 hooks 3~4개: 짧은 소구 포인트(label=키워드, value=한 줄). headline은 concept를
 구매자 언어로 옮긴 한 줄(상품명 반복 금지), subheadline은 그것을 받치는 구체적 한 줄.
@@ -126,8 +133,21 @@ export interface ComposeDetailPlanInput {
   imageDataUrl?: string | null;
 }
 
-/** 기획 실패는 null 반환. 오케스트레이터가 기본 상세 레이아웃으로 폴백하고 런은 계속된다. */
-export async function composeDetailPlan(input: ComposeDetailPlanInput): Promise<DetailPlan | null> {
+export interface ComposeDetailPlanResult {
+  plan: DetailPlan | null;
+  /** 실패 사유 — 경고와 `detail.plan_failed` 이벤트에 그대로 실린다. */
+  error: string | null;
+}
+
+/**
+ * 기획 실패는 null 반환. 오케스트레이터가 기본 상세 레이아웃으로 폴백하고 런은 계속된다.
+ *
+ * 상세 기획은 상세페이지 전체(컨셉·서사·패널 스펙)의 단일 출처다 — 여기서 실패하면
+ * 그 런에는 상세페이지가 없다. 그래서 한 번 더 시도한다.
+ */
+export async function composeDetailPlan(
+  input: ComposeDetailPlanInput,
+): Promise<ComposeDetailPlanResult> {
   const evidenceRich = input.specFacts.length + input.labelTexts.length >= 3;
 
   const userLines = [
@@ -149,19 +169,23 @@ export async function composeDetailPlan(input: ComposeDetailPlanInput): Promise<
     `세로 패널 설계 수: ${input.panelTarget}`,
   ];
 
-  try {
-    const plan = await requestOpenAiJson({
-      system: buildSystem(input.panelTarget, evidenceRich),
-      user: userLines.join("\n"),
-      imageUrls: input.imageDataUrl ? [input.imageDataUrl] : undefined,
-      schemaName: "detail_plan",
-      jsonSchema: PLAN_JSON_SCHEMA,
-      validator: PlanSchema,
-      reasoningEffort: "low",
-    });
-    return plan as DetailPlan;
-  } catch (error) {
-    console.warn("[detail-composer] 기획 실패:", error instanceof Error ? error.message : error);
-    return null;
+  let lastError = "알 수 없는 오류";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const plan = await requestOpenAiJson({
+        system: buildSystem(input.panelTarget, evidenceRich),
+        user: userLines.join("\n"),
+        imageUrls: input.imageDataUrl ? [input.imageDataUrl] : undefined,
+        schemaName: "detail_plan",
+        jsonSchema: PLAN_JSON_SCHEMA,
+        validator: PlanSchema,
+        reasoningEffort: "low",
+      });
+      return { plan: plan as DetailPlan, error: null };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      console.warn(`[detail-composer] 기획 실패 (${attempt}/2):`, lastError);
+    }
   }
+  return { plan: null, error: lastError };
 }

@@ -1,107 +1,63 @@
 import type { LiveEvent, ListingStage } from "./domain/types";
 
+/**
+ * 등록 실황 이벤트 → 파생 상태 리듀서 (순수 로직).
+ *
+ * Theater(무대 셸)와 Assembly(등록안 틀·리빌 디렉터)가 함께 쓰므로 컴포넌트 없는
+ * 모듈로 분리한다. 화면의 모든 값은 /api/stream(SSE) 실이벤트에서만 온다.
+ *
+ * ⚠ 리듀서는 **사실만** 쌓는다. "무엇을 언제 보여줄지"(리빌 목록·순서)는
+ *   Assembly 의 collectRevealables 가 파생 상태에서 통째로 계산한다 —
+ *   이벤트 도착 시점에 카드를 만들어 큐에 넣으면 재방출·재시도마다 카드가 늘어나고
+ *   순서를 되돌리려고 정렬·인내 타이머를 붙이게 된다 (그 구조가 버그의 근원이었다).
+ */
+
 /* ── 파생 상태 ───────────────────────────────────────────────── */
 
 export interface Shot {
-  kind: string;
+  /** 서버가 준 서사 위치 = 리빌 키. 재시도로 같은 index 가 와도 키가 같아 다시 열리지 않는다. */
   index: number;
+  kind: string;
+  caption: string;
   url: string;
   tookMs: number;
 }
 
 export interface PanelView {
+  index: number;
   role: string;
   headline: string;
   url: string;
-  index: number;
 }
 
 export interface PlanView {
   concept: string;
   angle: string;
   sections: Array<{ role: string; heading: string; hasPanel: boolean }>;
-}
-
-/**
- * 리빌 표시 순서 — 등록 서사 그대로다.
- * 파이프라인은 최단시간을 위해 병렬로 돌기 때문에 산출물 **도착 순서가 매번 다르다**.
- * 도착 순서로 보여 주면 관객이 이야기를 못 따라오므로, 표시 순서만 여기서 고정한다.
- * (파이프라인 실행 순서는 건드리지 않는다 — 연출과 실행을 분리한다.)
- */
-export const REVEAL_ORDER = {
-  productGroup: 10,
-  category: 20,
-  mainImage: 30,
-  gallery: 40,
-  price: 50,
-  title: 60,
-  requiredFields: 70,
-  detailPlan: 80,
-  detailPanel: 90,
-  other: 100,
-} as const;
-
-export interface FeedCard {
-  id: string;
-  /** 이벤트 seq — 같은 order 안에서 도착 순서를 유지하는 타이브레이커. */
-  seq: number;
-  at: string;
-  channel: string;
-  kicker: string;
-  title: string;
-  detail: string;
-  why: string | null;
-  tech: string | null;
-  slot: string | null;
-  size: "hero" | "medium" | "quick";
-  /** 낮을수록 먼저 보여 준다. 도착 순서가 아니라 이 값이 순서를 정한다. */
-  order?: number;
-}
-
-/** 리빌 카드가 "어느 칸으로 들어가는지"를 도착 전에 말한다. */
-export function slotLabel(slot: string | null): string | null {
-  if (!slot) return null;
-  if (slot === "thumb") return "대표 이미지";
-  if (slot.startsWith("gallery-")) return "추가 컷";
-  if (slot === "crumb") return "카테고리";
-  if (slot === "title") return "상품명";
-  if (slot === "price") return "판매가";
-  if (slot === "tags") return "검색 태그";
-  if (slot === "meta") return "필수 표시 항목";
-  if (slot === "plan") return "상세페이지";
-  if (slot.startsWith("panel-")) return `상세 ${Number(slot.slice(6)) + 1}컷`;
-  return null;
-}
-
-/** 슬롯이 서사 위치를 이미 말해 준다 — 예외인 카드만 order 를 직접 준다. */
-export function revealOrderForSlot(slot: string | null): number {
-  if (!slot) return REVEAL_ORDER.other;
-  if (slot === "title") return REVEAL_ORDER.productGroup;
-  if (slot === "crumb") return REVEAL_ORDER.category;
-  if (slot === "thumb") return REVEAL_ORDER.mainImage;
-  if (slot.startsWith("gallery-")) return REVEAL_ORDER.gallery;
-  if (slot === "price") return REVEAL_ORDER.price;
-  if (slot === "tags") return REVEAL_ORDER.title;
-  if (slot === "meta") return REVEAL_ORDER.requiredFields;
-  if (slot === "plan") return REVEAL_ORDER.detailPlan;
-  if (slot.startsWith("panel-")) return REVEAL_ORDER.detailPanel;
-  return REVEAL_ORDER.other;
+  panelCount: number;
 }
 
 export interface ControlDerived {
+  /** 상품군 — 상품명이 아니다. 카테고리·가격·상품명이 전부 여기서 갈린다. */
   productName: string | null;
-  productGroup: string | null;
   categoryPath: string | null;
-  categoryVerified: boolean;
-  categoryRounds: number;
-  categoryComps: number;
-  categoryCandidates: Array<{ categoryPath: string; votes: number }>;
+  categoryVerified: boolean | null;
+  categoryRounds: number | null;
+  categoryComps: number | null;
   price: number | null;
-  priceSample: number;
+  /** 정가 — 즉시할인이 걸릴 때만 price 보다 크다. */
+  listPrice: number | null;
+  discountRate: number | null;
+  priceSample: number | null;
   priceBasis: string | null;
+  /** 이 가격이 **등록될 값**으로 확정됐는가. 시세 조회 결과(산정 재료)와 구분한다. */
+  priceFinal: boolean;
   seoTitle: string | null;
-  tagCount: number;
-  attributeCount: number;
+  titleStrategy: string | null;
+  tagCount: number | null;
+  /** 확정된 태그 본문 — 개수만으로는 무엇으로 검색에 걸리는지 알 수 없다. */
+  tags: string[];
+  attributeCount: number | null;
   kcStatus: string | null;
   noticeType: string | null;
   originResolved: boolean | null;
@@ -110,33 +66,40 @@ export interface ControlDerived {
   shotDone: number;
   webSearches: number;
   planStarted: boolean;
+  /** 기획이 실패로 끝났는가 — 없으면 "기획 중…"이 런이 끝날 때까지 남는다. */
+  planFailed: boolean;
+  /** 패널이 승인된 대표 컷을 기다리는 중 — 이 구간을 "생성 중"으로 말하면 거짓말이다. */
+  awaitingHero: boolean;
   plan: PlanView | null;
   panels: PanelView[];
   panelStarts: number;
-  panelTotal: number;
+  panelTotal: number | null;
   registeredMode: "live" | "hold" | null;
-  cards: FeedCard[];
   rawCount: number;
   liveStage: ListingStage | null;
+  /** 마지막으로 관측된 "진행 중" 스테이지 — 중단 시 멈춘 지점 표시용. */
   lastRunningStage: ListingStage | null;
-  liveProgress: number;
+  liveProgress: number | null;
   liveLabel: string | null;
 }
 
 export const initialDerived: ControlDerived = {
   productName: null,
-  productGroup: null,
   categoryPath: null,
-  categoryVerified: false,
-  categoryRounds: 0,
-  categoryComps: 0,
-  categoryCandidates: [],
+  categoryVerified: null,
+  categoryRounds: null,
+  categoryComps: null,
   price: null,
-  priceSample: 0,
+  listPrice: null,
+  discountRate: null,
+  priceSample: null,
   priceBasis: null,
+  priceFinal: false,
   seoTitle: null,
-  tagCount: 0,
-  attributeCount: 0,
+  titleStrategy: null,
+  tagCount: null,
+  tags: [],
+  attributeCount: null,
   kcStatus: null,
   noticeType: null,
   originResolved: null,
@@ -145,16 +108,17 @@ export const initialDerived: ControlDerived = {
   shotDone: 0,
   webSearches: 0,
   planStarted: false,
+  planFailed: false,
+  awaitingHero: false,
   plan: null,
   panels: [],
   panelStarts: 0,
-  panelTotal: 0,
+  panelTotal: null,
   registeredMode: null,
-  cards: [],
   rawCount: 0,
   liveStage: null,
   lastRunningStage: null,
-  liveProgress: 0,
+  liveProgress: null,
   liveLabel: null,
 };
 
@@ -202,9 +166,26 @@ export function toolOutput(payload: Record<string, unknown>): Record<string, unk
 function str(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
+
 function num(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
+
+/** 빈 배열과 "안 왔다"를 구분한다 — 빈 배열로 기존 값을 덮지 않기 위해서다. */
+function strList(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const out = value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+  return out.length > 0 ? out : null;
+}
+
+export const SHOT_CAPTIONS: Record<string, string> = {
+  main_studio: "대표 스튜디오",
+  alt_studio: "보조 스튜디오",
+  lifestyle: "라이프스타일",
+  usage: "사용 장면",
+  closeup: "클로즈업",
+  mood: "무드",
+};
 
 const RUNNING_STAGES = new Set<ListingStage>([
   "vision",
@@ -216,41 +197,24 @@ const RUNNING_STAGES = new Set<ListingStage>([
   "publishing",
 ]);
 
-/**
- * ⚠ 한 이벤트가 카드를 둘 이상 만들 수 있다 (재료 생산 완료 → 상품명 + 필수 표시 항목).
- * id 를 seq 만으로 만들면 둘이 겹쳐 뒤엣것이 중복으로 걸러지고 화면에서 조용히 사라진다.
- */
-function card(input: Omit<FeedCard, "id" | "seq">, seq: number): FeedCard {
-  return {
-    ...input,
-    seq,
-    id: `c${seq}-${input.slot ?? input.kicker}`,
-    order: input.order ?? revealOrderForSlot(input.slot),
-  };
-}
-
 /* ── 리듀서 ──────────────────────────────────────────────────── */
 
 export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDerived {
   const payload = asRecord(event.payload);
-  const seq = event.seq;
-  const at = event.at;
 
   switch (event.channel) {
-    /* 개별 내용은 세컨드 화면 담당 — 여기서는 카운터만. */
+    /* 개별 내용은 세컨드 화면(/stream) 담당 — 여기서는 카운터만. */
     case "openai_raw":
       return { ...state, rawCount: state.rawCount + 1 };
 
     case "status": {
       const stage = str(payload.stage) as ListingStage | null;
-      const progress = num(payload.progress) ?? state.liveProgress;
       return {
         ...state,
         liveStage: stage ?? state.liveStage,
         // 진행 중 스테이지만 기록한다 — 중단 시 "어디까지 갔는지"를 정직하게 그리기 위해서다.
-        lastRunningStage:
-          stage && RUNNING_STAGES.has(stage) ? stage : state.lastRunningStage,
-        liveProgress: progress,
+        lastRunningStage: stage && RUNNING_STAGES.has(stage) ? stage : state.lastRunningStage,
+        liveProgress: num(payload.progress) ?? state.liveProgress,
         liveLabel: event.label || state.liveLabel,
       };
     }
@@ -261,161 +225,41 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
       }
       if (event.label === "image.shot_completed") {
         const url = str(payload.url);
-        if (!url) return state;
+        if (!url) return { ...state, shotDone: state.shotDone + 1 };
+        const kind = str(payload.kind) ?? "shot";
         const shot: Shot = {
-          kind: str(payload.kind) ?? "shot",
           index: num(payload.index) ?? state.shots.length,
+          kind,
+          caption: SHOT_CAPTIONS[kind] ?? kind,
           url,
           tookMs: num(payload.tookMs) ?? 0,
         };
-        // ⚠ 실런은 같은 샷을 다시 뱉을 수 있다(재시도·재생성·백로그 재전송).
-        //   어떤 경우에도 shotDone 은 세고, 카드는 "처음 온 index"에만 만든다 —
-        //   중복마다 카드를 만들면 이미 걸린 이미지가 리빌 대기로 숨었다 나타나기를 반복한다.
-        if (state.shots.some((existing) => existing.url === url)) {
-          return { ...state, shotDone: state.shotDone + 1 };
-        }
-        const replaceIndex = state.shots.findIndex((existing) => existing.index === shot.index);
-        if (replaceIndex >= 0) {
+        // ⚠ 실런은 같은 샷을 다시 뱉는다(재시도·재생성·백로그 재전송).
+        //   같은 서사 위치는 **제자리 교체**한다 — 늘리면 갤러리 칸이 밀리고 리빌이 반복된다.
+        const at = state.shots.findIndex((existing) => existing.index === shot.index);
+        if (at >= 0) {
           const shots = state.shots.slice();
-          shots[replaceIndex] = shot;
+          shots[at] = shot;
           return { ...state, shots, shotDone: state.shotDone + 1 };
         }
-        const isMain = shot.index === 0;
-        return {
-          ...state,
-          shots: [...state.shots, shot].sort((a, b) => a.index - b.index),
-          shotDone: state.shotDone + 1,
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "image",
-                kicker: isMain ? "대표 이미지 완성" : "추가 컷 완성",
-                title: isMain ? "대표 이미지" : `추가 컷 ${shot.index}`,
-                detail: `${shot.kind} · ${(shot.tookMs / 1000).toFixed(1)}초`,
-                why: isMain
-                  ? "검색 결과에 뜨는 첫 얼굴 — 누를지 말지가 여기서 갈립니다"
-                  : "상세로 들어오기 전, 상품을 여러 각도로 확인시킵니다",
-                tech: "gpt-image-2 · 올린 사진을 재료로 생성",
-                slot: isMain ? "thumb" : `gallery-${Math.max(0, shot.index - 1)}`,
-                size: isMain ? "hero" : "medium",
-                order: isMain ? REVEAL_ORDER.mainImage : REVEAL_ORDER.gallery,
-              },
-              seq,
-            ),
-          ],
-        };
+        /*
+          ⚠ index 로 정렬하지 않는다. 이미지는 병렬 생성이라 완성 순서가 매번 다르고
+          (실측: 대표 44.8s / 보조 20.6s / 사용 16.6s → 대표가 꼴찌), 정렬하면 늦게 온
+          앞 번호가 앞자리를 빼앗아 **이미 걸린 사진이 옆 칸으로 밀려난다**.
+          도착 순서대로 차곡차곡 쌓고, 한 번 앉은 사진은 움직이지 않는다.
+        */
+        return { ...state, shots: [...state.shots, shot], shotDone: state.shotDone + 1 };
       }
       return state;
     }
 
     case "tool_call": {
-      const args = toolArgs(payload);
       if (event.label === "resolve_category") {
-        // resolve_category 의 args 에서 productGroupName 을 뽑는다 — 첫 와우 모먼트.
-        // 에이전트가 도구를 재호출해도 카드는 한 번만 — 값은 조용히 갱신한다.
-        const group = str(args.productGroupName);
-        if (state.productGroup) {
-          return {
-            ...state,
-            productGroup: group ?? state.productGroup,
-            productName: state.productName ?? group,
-          };
-        }
-        return {
-          ...state,
-          productGroup: group ?? state.productGroup,
-          productName: state.productName ?? group,
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "tool_call",
-                kicker: "상품군 인식",
-                title: group ?? "카테고리 조회",
-                detail: str(args.productSummary) ?? "",
-                why: "무엇을 파는 물건인지가 정해져야 나머지 아홉 칸이 채워집니다",
-                tech: "resolve_category · 에이전트가 직접 호출",
-                slot: "title",
-                size: "hero",
-                order: REVEAL_ORDER.productGroup,
-              },
-              seq,
-            ),
-          ],
-        };
-      }
-      if (event.label === "research_market_price") {
-        return {
-          ...state,
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "tool_call",
-                kicker: "시세 조회 시작",
-                title: str(args.searchQuery) ?? "판매가 조사",
-                detail: "",
-                why: null,
-                tech: "research_market_price",
-                slot: null,
-                size: "quick",
-                order: REVEAL_ORDER.other,
-              },
-              seq,
-            ),
-          ],
-        };
+        // 상품군은 resolve_category 인자에서 나온다 — 첫 와우 모먼트.
+        return { ...state, productName: str(toolArgs(payload).productGroupName) ?? state.productName };
       }
       if (event.label === "web_search_call" || event.label.startsWith("web_search")) {
-        return {
-          ...state,
-          webSearches: state.webSearches + 1,
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "tool_call",
-                kicker: "신원 검증",
-                title: "웹 검색으로 브랜드를 확인합니다",
-                detail: "",
-                why: "인쇄된 로고만으로는 정품 여부를 말할 수 없습니다",
-                tech: "hosted web_search",
-                slot: null,
-                size: "medium",
-                order: REVEAL_ORDER.other,
-              },
-              seq,
-            ),
-          ],
-        };
-      }
-      if (event.label === "generate_image_suite") {
-        return {
-          ...state,
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "tool_call",
-                kicker: "이미지 진행 확인",
-                title: "연출 이미지 상태를 확인합니다",
-                detail: "",
-                why: null,
-                tech: "generate_image_suite · 논블로킹",
-                slot: null,
-                size: "quick",
-                order: REVEAL_ORDER.other,
-              },
-              seq,
-            ),
-          ],
-        };
+        return { ...state, webSearches: state.webSearches + 1 };
       }
       return state;
     }
@@ -423,130 +267,29 @@ export function applyEvent(state: ControlDerived, event: LiveEvent): ControlDeri
     case "tool_result": {
       const output = toolOutput(payload);
       if (event.label === "resolve_category") {
-        const categoryPath = str(output.categoryPath);
-        const verified = output.outcome === "verified";
-        const rounds = num(output.verificationRounds) ?? 0;
-        const comps = num(output.comparableListings) ?? 0;
-        const candidates = Array.isArray(output.topCandidates)
-          ? (output.topCandidates as unknown[])
-              .map((entry) => {
-                const record = asRecord(entry);
-                return {
-                  categoryPath: str(record.categoryPath) ?? "",
-                  votes: num(record.votes) ?? 0,
-                };
-              })
-              .filter((entry) => entry.categoryPath)
-          : state.categoryCandidates;
-        // 재호출 결과 — 값만 갱신, 카드 중복 금지 (칩이 숨었다 나타나기를 반복한다).
-        if (state.categoryPath) {
-          return {
-            ...state,
-            categoryPath: categoryPath ?? state.categoryPath,
-            categoryVerified: verified || state.categoryVerified,
-            categoryRounds: rounds,
-            categoryComps: comps,
-            categoryCandidates: candidates,
-          };
-        }
         return {
           ...state,
-          categoryPath: categoryPath ?? state.categoryPath,
-          categoryVerified: verified,
-          categoryRounds: rounds,
-          categoryComps: comps,
-          categoryCandidates: candidates,
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "tool_result",
-                kicker: "카테고리 결정",
-                // 정직성 분기 — 검증 루프를 통과했을 때만 "확정".
-                title: verified ? "카테고리 확정 — 카탈로그 투표" : "카테고리 후보 선정 — 검증 미통과",
-                detail: categoryPath ?? "",
-                why: "매대를 잘못 고르면 아무도 못 찾습니다",
-                tech: `같은 상품군 모델 ${comps}건 투표 · 검증 ${rounds}라운드`,
-                slot: "crumb",
-                size: "hero",
-                order: REVEAL_ORDER.category,
-              },
-              seq,
-            ),
-          ],
+          categoryPath: str(output.categoryPath) ?? state.categoryPath,
+          categoryVerified: output.outcome === "verified" || state.categoryVerified === true,
+          categoryRounds: num(output.verificationRounds) ?? state.categoryRounds,
+          categoryComps: num(output.comparableListings) ?? state.categoryComps,
         };
       }
       if (event.label === "research_market_price") {
         const price = num(output.salePriceKrw);
-        const sample = num(output.sampleSize) ?? 0;
         if (price == null) return state;
-        // 재조회 — 가격만 갱신, 리빌 반복 금지.
-        if (state.price != null) {
-          return { ...state, price, priceSample: sample, priceBasis: str(output.basis) };
-        }
         return {
           ...state,
           price,
-          priceSample: sample,
-          priceBasis: str(output.basis),
-          cards: [
-            ...state.cards,
-            card(
-              {
-                at,
-                channel: "tool_result",
-                kicker: "판매가 결정",
-                // 정직성 분기 — 시세 표본이 실재할 때만 "시세 기반".
-                title: sample > 0 ? "시세 기반 판매가 산출" : "판매가 산출 — 에이전트 추정",
-                detail:
-                  sample > 0
-                    ? `${price.toLocaleString("ko-KR")}원 · 표본 ${sample}건`
-                    : `${price.toLocaleString("ko-KR")}원 · 사진·상품 정보 근거`,
-                why: "비싸면 안 팔리고 싸면 손해 — 팔리는 선을 잡습니다",
-                tech:
-                  sample > 0
-                    ? `실판매 표본 ${sample}건 · IQR 정제 후 보수적 백분위`
-                    : "시세 표본 없음 — 사진·상품 정보 근거 추정",
-                slot: "price",
-                size: "hero",
-                order: REVEAL_ORDER.price,
-              },
-              seq,
-            ),
-          ],
+          priceSample: num(output.sampleSize) ?? state.priceSample ?? 0,
+          priceBasis: str(output.basis) ?? state.priceBasis,
         };
       }
       return state;
     }
 
     case "milestone":
-      return applyMilestone(state, event, payload, seq, at);
-
-    case "error":
-      return {
-        ...state,
-        cards: [
-          ...state.cards,
-          card(
-            {
-              at,
-              channel: "error",
-              kicker: "중단",
-              title: event.label,
-              detail: Array.isArray(payload.issues)
-                ? (payload.issues as unknown[]).map(String).join(" · ")
-                : (str(payload.message) ?? ""),
-              why: null,
-              tech: null,
-              slot: null,
-              size: "medium",
-              order: REVEAL_ORDER.other,
-            },
-            seq,
-          ),
-        ],
-      };
+      return applyMilestone(state, event, payload);
 
     default:
       return state;
@@ -557,24 +300,31 @@ function applyMilestone(
   state: ControlDerived,
   event: LiveEvent,
   payload: Record<string, unknown>,
-  seq: number,
-  at: string,
 ): ControlDerived {
   const label = event.label;
 
   if (label === "카테고리 매칭") {
     const outcome = str(payload.outcome);
-    const verified = outcome === "verified" || outcome === "manual";
     return {
       ...state,
       categoryPath: str(payload.categoryName) ?? state.categoryPath,
-      categoryVerified: state.categoryVerified || verified,
+      categoryVerified:
+        outcome === "verified" || outcome === "manual" ? true : (state.categoryVerified ?? false),
       categoryRounds: num(payload.rounds) ?? state.categoryRounds,
     };
   }
 
   if (label === "detail.plan_started") {
     return { ...state, planStarted: true, panelTotal: num(payload.panelTarget) ?? state.panelTotal };
+  }
+
+  if (label === "detail.plan_failed") {
+    // 총 수를 지운다 — 오지 않을 패널을 세는 "0/6" 이 남으면 그것도 거짓말이다.
+    return { ...state, planFailed: true, panelTotal: null, awaitingHero: false };
+  }
+
+  if (label === "detail.awaiting_hero") {
+    return { ...state, awaitingHero: true };
   }
 
   if (label === "detail.plan_completed") {
@@ -588,34 +338,15 @@ function applyMilestone(
           };
         })
       : [];
-    const plan: PlanView = {
-      concept: str(payload.concept) ?? "",
-      angle: str(payload.angle) ?? "",
-      sections,
-    };
-    // 기획 재시도(스키마 거부 후 재기획 등) — 내용만 갱신, 카드는 처음 한 번.
-    if (state.plan) return { ...state, plan };
     return {
       ...state,
-      plan,
-      cards: [
-        ...state.cards,
-        card(
-          {
-            at,
-            channel: "milestone",
-            kicker: "상세페이지 기획 확정",
-            title: plan.concept,
-            detail: plan.angle,
-            why: "본문 — 구매를 결정짓는 자리. 무엇을 왜 보여줄지 먼저 정합니다",
-            tech: `${sections.length}개 섹션 · 패널 ${num(payload.panelCount) ?? 0}컷 설계`,
-            slot: "plan",
-            size: "hero",
-            order: REVEAL_ORDER.detailPlan,
-          },
-          seq,
-        ),
-      ],
+      planStarted: true,
+      plan: {
+        concept: str(payload.concept) ?? "",
+        angle: str(payload.angle) ?? "",
+        sections,
+        panelCount: num(payload.panelCount) ?? sections.filter((section) => section.hasPanel).length,
+      },
     };
   }
 
@@ -624,126 +355,94 @@ function applyMilestone(
       ...state,
       panelStarts: state.panelStarts + 1,
       panelTotal: num(payload.total) ?? state.panelTotal,
+      // 첫 패널이 시작됐다 = 대표 컷 대기가 끝났다.
+      awaitingHero: false,
     };
   }
 
   if (label === "image.panel_completed") {
     const url = str(payload.url);
-    if (!url || state.panels.some((panel) => panel.url === url)) return state;
-    const index = num(payload.index) ?? state.panels.length;
+    if (!url) return state;
     const panel: PanelView = {
+      index: num(payload.index) ?? state.panels.length,
       role: str(payload.role) ?? "",
       headline: str(payload.headline) ?? "",
       url,
-      index,
     };
-    // 같은 index 재방출(재시도) — 값만 교체하고 리빌은 다시 열지 않는다.
-    const replaceIndex = state.panels.findIndex((existing) => existing.index === index);
-    if (replaceIndex >= 0) {
+    const at = state.panels.findIndex((existing) => existing.index === panel.index);
+    if (at >= 0) {
       const panels = state.panels.slice();
-      panels[replaceIndex] = panel;
+      panels[at] = panel;
       return { ...state, panels, panelTotal: num(payload.total) ?? state.panelTotal };
     }
     return {
       ...state,
       panels: [...state.panels, panel].sort((a, b) => a.index - b.index),
       panelTotal: num(payload.total) ?? state.panelTotal,
-      cards: [
-        ...state.cards,
-        card(
-          {
-            at,
-            channel: "milestone",
-            kicker: "상세 컷 완성",
-            title: panel.headline || `상세 ${index + 1}컷`,
-            detail: panel.role,
-            why: null,
-            tech: "gpt-image-2 · 세로 2:3 패널",
-            slot: `panel-${index}`,
-            size: "medium",
-            order: REVEAL_ORDER.detailPanel,
-          },
-          seq,
-        ),
-      ],
+    };
+  }
+
+  /*
+    ── 개별 재료 방송 ──
+    서버가 재료를 완성되는 대로 하나씩 보낸다. `재료 생산 완료` 는 같은 값을 다시
+    싣고 오는 요약이자 백스톱이므로, 여기서 먼저 받아 두면 리빌이 재료 구간 전체에
+    걸쳐 흩어진다. 늦게 접속한 클라이언트는 요약 하나로 전부 복구한다.
+  */
+  if (label === "materials.title_resolved") {
+    return {
+      ...state,
+      seoTitle: str(payload.seoTitle) ?? state.seoTitle,
+      titleStrategy: str(payload.titleStrategy) ?? state.titleStrategy,
+    };
+  }
+
+  if (label === "materials.tags_resolved") {
+    return {
+      ...state,
+      tagCount: num(payload.tagCount) ?? state.tagCount,
+      tags: strList(payload.tags) ?? state.tags,
+    };
+  }
+
+  if (label === "materials.price_resolved") {
+    return {
+      ...state,
+      price: num(payload.salePrice) ?? state.price,
+      listPrice: num(payload.listPrice) ?? state.listPrice,
+      discountRate: num(payload.discountRate) ?? state.discountRate,
+      priceBasis: str(payload.priceBasis) ?? state.priceBasis,
+      priceSample: num(payload.sampleSize) ?? state.priceSample,
+      priceFinal: true,
+    };
+  }
+
+  if (label === "materials.compliance_resolved") {
+    return {
+      ...state,
+      kcStatus: str(payload.kcStatus) ?? state.kcStatus,
+      noticeType: str(payload.noticeType) ?? state.noticeType,
+      originResolved:
+        typeof payload.originResolved === "boolean" ? payload.originResolved : state.originResolved,
+      attributeCount: num(payload.attributeCount) ?? state.attributeCount,
     };
   }
 
   if (label === "재료 생산 완료") {
-    const confirmedTitle = str(payload.seoTitle);
-    const titleStrategy = str(payload.titleStrategy);
-    // 재실행·재방송 — 값만 갱신하고 카드(상품명·필수 표시)는 다시 만들지 않는다.
-    if (state.seoTitle != null || state.noticeType != null || state.kcStatus != null) {
-      return {
-        ...state,
-        seoTitle: confirmedTitle ?? state.seoTitle,
-        tagCount: num(payload.tagCount) ?? state.tagCount,
-        attributeCount: num(payload.attributeCount) ?? state.attributeCount,
-        kcStatus: str(payload.kcStatus) ?? state.kcStatus,
-        noticeType: str(payload.noticeType) ?? state.noticeType,
-        originResolved:
-          typeof payload.originResolved === "boolean" ? payload.originResolved : state.originResolved,
-        price: num(payload.salePrice) ?? state.price,
-      };
-    }
-    const titleCard = confirmedTitle
-      ? [
-          card(
-            {
-              at,
-              channel: "milestone",
-              kicker: "상품명 확정",
-              title: confirmedTitle,
-              detail: `${confirmedTitle.length}자`,
-              why: "검색창에 뭘 치는지가 노출을 정합니다 — 상품군 명사를 앞에 두고 검색 어휘로 다시 씁니다",
-              tech:
-                titleStrategy === "composed"
-                  ? "근거 토큰 조합 · 발명 단어 차단"
-                  : `어순 전략 ${titleStrategy ?? "accuracy"} · 검색 수요 최대 조합`,
-              slot: "title",
-              size: "hero",
-              order: REVEAL_ORDER.title,
-            },
-            seq,
-          ),
-        ]
-      : [];
-
     return {
       ...state,
-      seoTitle: confirmedTitle ?? state.seoTitle,
+      seoTitle: str(payload.seoTitle) ?? state.seoTitle,
+      titleStrategy: str(payload.titleStrategy) ?? state.titleStrategy,
+      listPrice: num(payload.listPrice) ?? state.listPrice,
+      discountRate: num(payload.discountRate) ?? state.discountRate,
       tagCount: num(payload.tagCount) ?? state.tagCount,
+      tags: strList(payload.tags) ?? state.tags,
       attributeCount: num(payload.attributeCount) ?? state.attributeCount,
       kcStatus: str(payload.kcStatus) ?? state.kcStatus,
       noticeType: str(payload.noticeType) ?? state.noticeType,
       originResolved:
         typeof payload.originResolved === "boolean" ? payload.originResolved : state.originResolved,
       price: num(payload.salePrice) ?? state.price,
-      cards: [
-        ...state.cards,
-        ...titleCard,
-        card(
-          {
-            at,
-            channel: "milestone",
-            kicker: "필수 표시 항목 채움",
-            title: "원산지 · KC · 고시",
-            detail: [
-              payload.originResolved ? "원산지 확정" : "원산지 설정 기본값",
-              str(payload.kcStatus),
-              str(payload.noticeType),
-            ]
-              .filter(Boolean)
-              .join(" · "),
-            why: "원산지 · KC · 고시는 법으로 요구되는 칸 — 하나만 비어도 등록이 막힙니다",
-            tech: `검색 태그 ${num(payload.tagCount) ?? 0}개 · 상품속성 ${num(payload.attributeCount) ?? 0}건`,
-            slot: "meta",
-            size: "hero",
-            order: REVEAL_ORDER.requiredFields,
-          },
-          seq,
-        ),
-      ],
+      priceFinal: state.priceFinal || num(payload.salePrice) != null,
     };
   }
 
@@ -751,39 +450,13 @@ function applyMilestone(
     return { ...state, registeredMode: label.includes("등록 완료") ? "live" : "hold" };
   }
 
-  if (label === "실등록 보류 판정") {
-    return {
-      ...state,
-      cards: [
-        ...state.cards,
-        card(
-          {
-            at,
-            channel: "milestone",
-            kicker: "실등록 보류",
-            title: "등록안은 완성됐습니다",
-            detail: Array.isArray(payload.reasons)
-              ? (payload.reasons as unknown[]).map(String).join(" · ")
-              : "",
-            why: null,
-            tech: null,
-            slot: null,
-            size: "medium",
-            order: REVEAL_ORDER.other,
-          },
-          seq,
-        ),
-      ],
-    };
-  }
-
-  // `단계 소요시간(ms)` 는 결과 화면이 레코드에서 읽는다.
+  // `단계 소요시간(ms)` 등 나머지는 결과 화면이 레코드에서 읽는다.
   return state;
 }
 
 /* ── 7단계 스트립 ────────────────────────────────────────────── */
 
-export const PHASES = [
+export const PHASES: Array<{ key: string; label: string }> = [
   { key: "vision", label: "상품 파악" },
   { key: "research", label: "신원 검증" },
   { key: "assets", label: "연출 이미지" },
@@ -791,9 +464,9 @@ export const PHASES = [
   { key: "materials", label: "등록 재료" },
   { key: "validation", label: "규정 검증" },
   { key: "publishing", label: "스토어 등록" },
-] as const;
+];
 
-export const STAGE_POSITION: Record<string, number> = {
+const STAGE_POSITION: Record<string, number> = {
   queued: 0,
   vision: 1,
   research: 1,
@@ -808,18 +481,19 @@ export const STAGE_POSITION: Record<string, number> = {
 };
 
 export type PhaseState = "idle" | "active" | "done" | "skipped" | "blocked";
+export type TerminalStatus = "registered" | "needs_review" | "failed" | null;
 
 export function phaseStates(
   derived: ControlDerived,
   stage: ListingStage | null,
-  terminal: "registered" | "needs_review" | "failed" | null,
+  terminal: TerminalStatus,
 ): PhaseState[] {
   // ⚠ 중단 시 스트립은 lastRunningStage 기준으로 그린다.
-  //   서버가 보낸 최종 stage(blocked)를 쓰면 모든 단계가 완료로 보인다.
+  //   서버가 보낸 최종 stage(blocked)를 쓰면 모든 단계가 완료로 보인다 — 거짓말이 된다.
   const interrupted = terminal === "needs_review" || terminal === "failed";
   const effectiveStage = interrupted ? (derived.lastRunningStage ?? stage) : stage;
   const pos = STAGE_POSITION[effectiveStage ?? "queued"] ?? 0;
-  const complete = terminal === "registered";
+  const complete = terminal === "registered" || stage === "complete";
 
   const states: PhaseState[] = PHASES.map((phase, index) => {
     const order = index + 1;
@@ -849,7 +523,6 @@ export function phaseStates(
   });
 
   if (interrupted) {
-    // 마지막 active (역방향 탐색, 없으면 첫 idle)에 blocked 표시
     let target = -1;
     for (let index = states.length - 1; index >= 0; index -= 1) {
       if (states[index] === "active") {
@@ -878,29 +551,22 @@ export type SceneKey =
 export function sceneOf(
   stage: ListingStage | null,
   derived: ControlDerived,
-  terminal: "registered" | "needs_review" | "failed" | null,
+  terminal: TerminalStatus,
 ): SceneKey {
   if (terminal === "registered" || stage === "complete") return "complete";
   if (stage === "category" || stage === "materials" || stage === "validation" || stage === "publishing") {
     return stage;
   }
+  // 에이전트 구간(queued/vision/research/assets) — 활동으로 장면을 고른다.
   if (!derived.productName) return "vision";
   if (derived.categoryPath) return "category";
   return "assets";
 }
 
-/** 씬 헤드라인은 씬 기준으로 고정한다 — 서버 stageLabel 은 씬 전환보다 늦게 도착할 수 있다. */
-export const SCENE_HEADLINE: Record<SceneKey, string | null> = {
-  vision: null,
-  assets: "스토어에 걸 사진을 만들고 있어요",
-  category: "어느 매대에 놓을지 정하고 있어요",
-  materials: "등록 칸을 채우고 있어요",
-  validation: "규정을 검증하고 있어요",
-  publishing: "스마트스토어에 올리고 있어요",
-  complete: "등록이 끝났어요",
-};
-
-/** 씬 서브카피는 "무엇을"이 아니라 "왜 그게 필요한지"를 말한다. */
+/**
+ * 씬 서브카피 — 상품 등록을 한 번도 안 해본 관객이 읽는 줄이다. 무엇을 하는지가
+ * 아니라 **왜 그게 필요한지**를 말한다.
+ */
 export const SCENE_SUB: Record<SceneKey, string> = {
   vision: "라벨의 글자까지 읽습니다 — 무엇을 파는 물건인지가 전부의 출발점입니다",
   assets: "올린 사진은 재료일 뿐 — 스토어에 걸 사진은 따로 만듭니다",
@@ -911,6 +577,18 @@ export const SCENE_SUB: Record<SceneKey, string> = {
   complete: "사람 손 없이 여기까지 왔습니다",
 };
 
+/** 틀과 헤드라인이 항상 같은 이야기를 하도록 씬 기준으로 고정한다 —
+ *  서버 stageLabel 은 씬 전환보다 늦게 도착할 수 있다. */
+export function sceneHeadline(scene: SceneKey, stageLabel: string): string {
+  if (scene === "assets") return "스토어에 걸 사진을 만들고 있어요";
+  if (scene === "category") return "어느 매대에 놓을지 정하고 있어요";
+  if (scene === "materials") return "등록 칸을 채우고 있어요";
+  if (scene === "validation") return "규정을 검증하고 있어요";
+  if (scene === "publishing") return "스마트스토어에 올리고 있어요";
+  if (scene === "complete") return "등록이 끝났어요";
+  return stageLabel;
+}
+
 export const ROLE_LABEL: Record<string, string> = {
   hook: "후킹",
   problem: "공감",
@@ -919,6 +597,7 @@ export const ROLE_LABEL: Record<string, string> = {
   usage: "사용",
   detail: "디테일",
   trust: "신뢰",
+  spec: "스펙",
   closing: "마무리",
 };
 
@@ -928,4 +607,12 @@ export const FACT_KIND_LABEL: Record<string, string> = {
   configured: "판매자 제공",
   inferred: "추론",
   unresolved: "미확인",
+};
+
+export const KC_LABEL: Record<string, string> = {
+  not_target: "대상 아님",
+  safe_criterion: "안전기준 준수",
+  certified: "인증 등록",
+  child_fallback: "어린이제품",
+  unknown: "확인 실패",
 };

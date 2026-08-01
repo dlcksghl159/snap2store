@@ -9,7 +9,7 @@ import { matchCategory } from "../materials/category-match.js";
 import { resolveNotice } from "../materials/notice.js";
 import { resolveKc } from "../materials/kc.js";
 import { resolveOrigin } from "../materials/origin.js";
-import { resolvePrice, calcReturnExchangeFeeKrw } from "../materials/pricing.js";
+import { resolvePrice, calcReturnExchangeFeeKrw, planDiscount } from "../materials/pricing.js";
 import { buildSeoInfo, generateTagPortfolio, resolveTags } from "../materials/tags.js";
 import { generateSeoTitle } from "../materials/title-seo.js";
 import { repairTitle, validateTitle } from "../materials/title-gate.js";
@@ -44,8 +44,15 @@ import type {
   TagResolution,
 } from "../../src/domain/types";
 
-/** 상세 패널이 승인된 썸네일을 기다리는 상한. 넘으면 원본 사진 참조로 진행한다. */
-const HERO_WAIT_MS = 120_000;
+/**
+ * 상세 패널이 승인된 썸네일을 기다리는 상한. 넘으면 원본 사진 참조로 진행한다.
+ *
+ * ⚠ 120초는 상한이 아니라 사실상 무한이었다 — 대표 컷 자체가 실측 21초(low)~52초
+ * (medium)이므로, 이 대기가 그보다 길면 "대표가 실패했을 때만" 걸리는 값이 된다.
+ * 그 사이 무대는 완전히 멈춘다. 대표가 정상 완주하는 시간을 덮되 그 이상은 기다리지
+ * 않도록 조인다.
+ */
+const HERO_WAIT_MS = 45_000;
 
 export interface OrchestratorInput {
   listingId: string;
@@ -96,8 +103,10 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
 
   // 승인된 썸네일이 상세페이지의 정체성 기준이다.
   let heroPath: string | null = null;
+  let heroSettled = false;
   void input.heroReady.then((filePath) => {
     heroPath = filePath;
+    heroSettled = true;
   });
 
   /* ── ① 거부 게이트 — 반드시 재료 생산 앞에 둔다 (RISK_GATE=off 면 경고 없이 완주) ── */
@@ -225,6 +234,16 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
   const materialsStartedAt = Date.now();
   const panelTarget = config.media.detailPanelCount;
 
+  /*
+    ⚠ 재료는 **완성되는 즉시 하나씩** 방송한다.
+    예전에는 Promise.all 이 끝난 뒤 `재료 생산 완료` 하나에 상품명·가격·태그·속성·
+    KC·고시·원산지를 전부 실어 보냈다. 그 결과 관객은 재료 구간 30~50초 동안 빈
+    화면을 보다가, 마지막 1~3초에 산출물 전부를 한꺼번에 맞고, 곧바로 등록 완료를
+    봤다 — 무대가 "조합"을 보여 줄 시간이 아예 없었다(실측: 재료 완료 T+52.5s →
+    등록 완료 T+56.0s, 그 사이 재생해야 할 리빌은 약 14.6초 분량).
+    개별 방송이 그 구간을 채우고, 종착 시점의 잔여 큐를 거의 0으로 만든다.
+  */
+
   // 갈래 A — 제목 → 태그 체인 (순서 의존). 다른 재료와는 병렬.
   const titleTagsPromise = (async (): Promise<{
     seoResult: SeoTitleResult;
@@ -249,6 +268,13 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     }).catch(() => emptySeo);
 
     const resolvedTitle = seoResult.title ?? draft.title;
+    void onEvent("materials.title_resolved", {
+      seoTitle: resolvedTitle,
+      titleStrategy: seoResult.strategy,
+      coveredQueries: seoResult.coveredQueries.length,
+      monthlyVolume: seoResult.monthlyVolume,
+    }).catch(console.warn);
+
     const tagResult = await generateTagPortfolio({
       productTitle: resolvedTitle,
       productGroup: draft.categoryQuery,
@@ -258,6 +284,12 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
       leafName: category.leafName,
       categoryPath: category.categoryName,
     }).catch(() => resolveTags({ candidates: draft.tags, leafName: category.leafName }));
+    // ⚠ 태그 **본문**을 함께 싣는다. 개수만 보내면 무대는 레코드가 저장되는 런 종료까지
+    //    "검색 태그 N종 확정"이라는 숫자만 띄운다 — 정작 무엇으로 검색에 걸리는지가 안 보인다.
+    void onEvent("materials.tags_resolved", {
+      tagCount: tagResult.tags.length,
+      tags: tagResult.tags.map((tag) => tag.text),
+    }).catch(console.warn);
 
     return { seoResult, tagResult, resolvedTitle };
   })();
@@ -271,7 +303,7 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     if (panelTarget <= 0) return { plan: null, panels: [], panelWarnings: [] };
     void onEvent("detail.plan_started", { panelTarget }).catch(console.warn);
 
-    const plan = await composeDetailPlan({
+    const composed = await composeDetailPlan({
       productTitle: draft.title,
       productGroup: draft.categoryQuery,
       summary: draft.summary,
@@ -282,7 +314,20 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
       panelTarget,
       imageDataUrl,
     });
-    if (!plan) return { plan: null, panels: [], panelWarnings: ["상세 기획 실패"] };
+    const plan = composed.plan;
+    if (!plan) {
+      /*
+        ⚠ 실패를 반드시 방송한다. 이 이벤트가 없으면 무대는 `detail.plan_started` 만
+        받은 채로 "컨셉 기획 중…"을 런이 끝날 때까지 띄운다 — 실제로는 아무도
+        기획하고 있지 않은데 기다리는 그림이 남는다.
+      */
+      void onEvent("detail.plan_failed", { reason: composed.error }).catch(console.warn);
+      return {
+        plan: null,
+        panels: [],
+        panelWarnings: [`상세 기획 실패 — 기본 상세 레이아웃으로 진행합니다: ${composed.error}`],
+      };
+    }
 
     void onEvent("detail.plan_completed", {
       concept: plan.concept,
@@ -313,7 +358,13 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
      * 상세 패널은 승인된 썸네일을 **기다린다**.
      * 원본 사진만 보고 그리면 썸네일과 상세페이지가 서로 다른 상품처럼 보인다 —
      * 일관성이 지연보다 중요하다. 다만 상한을 두어 대표가 낙오해도 상세는 완성된다.
+     *
+     * ⚠ 이 대기는 실측 20초를 넘긴다(대표 컷이 늦게 완성되는 런). 알리지 않으면
+     * 무대는 그동안 "패널 N컷 생성 중…"이라고 거짓말을 하며 침묵한다.
      */
+    if (!heroSettled) {
+      void onEvent("detail.awaiting_hero", { limitMs: HERO_WAIT_MS }).catch(console.warn);
+    }
     await Promise.race([input.heroReady, sleep(HERO_WAIT_MS)]);
 
     try {
@@ -367,80 +418,132 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
       priceBasis: "최저 안전가 — 시세·추정 부재 (검토 권장)",
       source: "floor",
     };
-  })().catch((): PriceResolution => {
-    warnings.push(`판매가 산출 실패 — 최저 안전가(${config.pricing.minSalePrice}원)로 자동 진행합니다.`);
-    return {
-      resolved: true,
-      salePrice: config.pricing.minSalePrice,
-      priceBasis: "최저 안전가 — 시세·추정 부재 (검토 권장)",
-      source: "floor",
-      sampleSize: 0,
-      distribution: null,
-    };
-  });
+  })()
+    .catch((): PriceResolution => {
+      warnings.push(`판매가 산출 실패 — 최저 안전가(${config.pricing.minSalePrice}원)로 자동 진행합니다.`);
+      return {
+        resolved: true,
+        salePrice: config.pricing.minSalePrice,
+        priceBasis: "최저 안전가 — 시세·추정 부재 (검토 권장)",
+        source: "floor",
+        sampleSize: 0,
+        distribution: null,
+      };
+    })
+    .then((price) => {
+      /*
+        즉시할인 설계 — 가격이 확정된 **이 지점 한 곳에서만** 한다.
+        price 는 폴백 경로가 넷이라 각 생성지에서 계산하면 어긋난다.
+        고객가(price.salePrice)는 그대로 두고 정가만 역산해 올린다.
+        ⚠ 정가와 할인가는 **한 박자에 같이** 확정돼야 한다. 고객가를 먼저 알리고
+        나중에 정가로 되돌리면 같은 값을 두 번 다르게 말하는 셈이 된다.
+      */
+      const discount = planDiscount(price.salePrice, {
+        targetRate: config.pricing.discountRate,
+        displayUnit: config.pricing.displayUnit,
+      });
+      if (discount) {
+        price.listPrice = discount.listPrice;
+        price.discountKrw = discount.discountKrw;
+        price.discountRate = discount.discountRate;
+      }
+      void onEvent("materials.price_resolved", {
+        salePrice: price.salePrice,
+        listPrice: price.listPrice ?? price.salePrice,
+        discountKrw: price.discountKrw ?? 0,
+        discountRate: price.discountRate ?? 0,
+        priceBasis: price.priceBasis,
+        sampleSize: price.sampleSize,
+      }).catch(console.warn);
+      return price;
+    });
 
   const emptyAttributes: AttributeAnalysis = { applied: [], reviewed: 0, warnings: [] };
 
+  const noticePromise = resolveNotice({
+    categoryId: category.categoryId,
+    config,
+    productName: draft.title,
+    modelName: draft.modelName,
+    manufacturerName: draft.manufacturerName,
+  }).catch(() =>
+    resolveNotice({
+      categoryId: null,
+      config,
+      productName: draft.title,
+      modelName: draft.modelName,
+      manufacturerName: draft.manufacturerName,
+      fetchTypes: async () => [],
+    }),
+  );
+
+  const kcPromise = resolveKc({
+    categoryId: category.categoryId,
+    config,
+    certificationNumber: input.resolution?.kcCertificationNumber ?? null,
+  }).catch(() => resolveKc({ categoryId: null, config, detail: null, certificationNumber: null }));
+
+  const originPromise = resolveOrigin({
+    marking: draft.originMarking,
+    config,
+    sellerOverride: input.resolution
+      ? {
+          originAreaCode: input.resolution.originAreaCode,
+          content: input.resolution.originContent,
+        }
+      : null,
+  }).catch((error): OriginResolution => {
+    warnings.push(`원산지 해석 실패: ${message(error)}`);
+    return {
+      resolved: false,
+      needsReview: true,
+      reviewReason: "원산지 해석 중 오류",
+      countryLabel: null,
+      domestic: false,
+      originAreaInfo: null,
+      source: "label",
+      warnings: [],
+    };
+  });
+
+  const attributesPromise = (
+    category.categoryId
+      ? analyzeProductAttributes({
+          categoryId: category.categoryId,
+          productTitle: draft.title,
+          productGroup: draft.categoryQuery,
+          summary: draft.summary,
+          specFacts: draft.specFacts,
+          labelTexts: draft.labelTexts,
+        })
+      : Promise.resolve(emptyAttributes)
+  ).catch(() => emptyAttributes);
+
+  /*
+    법정 표시 항목은 한 칸(필수 표시)에 함께 꽂히므로 넷이 다 모였을 때 한 번 방송한다.
+    ⚠ 이 체인은 **두 번째 소비자**다 — 아래 Promise.all 이 진짜 소비자다. 여기에 catch 를
+    달지 않으면 폴백까지 실패한 재료 하나가 unhandled rejection 으로 프로세스를 죽인다.
+    방송이 실패해도 런은 계속돼야 한다.
+  */
+  void Promise.all([noticePromise, kcPromise, originPromise, attributesPromise])
+    .then(([resolvedNotice, resolvedKc, resolvedOrigin, resolvedAttributes]) =>
+      onEvent("materials.compliance_resolved", {
+        noticeType: resolvedNotice.noticeType,
+        kcStatus: resolvedKc.status,
+        originResolved: resolvedOrigin.resolved && !resolvedOrigin.needsReview,
+        attributeCount: resolvedAttributes.applied.length,
+      }),
+    )
+    .catch(console.warn);
+
   const [notice, kc, origin, price, titleTags, attributeAnalysis, imageSuite, planPanels] =
     await Promise.all([
-      resolveNotice({
-        categoryId: category.categoryId,
-        config,
-        productName: draft.title,
-        modelName: draft.modelName,
-        manufacturerName: draft.manufacturerName,
-      }).catch(() =>
-        resolveNotice({
-          categoryId: null,
-          config,
-          productName: draft.title,
-          modelName: draft.modelName,
-          manufacturerName: draft.manufacturerName,
-          fetchTypes: async () => [],
-        }),
-      ),
-      resolveKc({
-        categoryId: category.categoryId,
-        config,
-        certificationNumber: input.resolution?.kcCertificationNumber ?? null,
-      }).catch(() =>
-        resolveKc({ categoryId: null, config, detail: null, certificationNumber: null }),
-      ),
-      resolveOrigin({
-        marking: draft.originMarking,
-        config,
-        sellerOverride: input.resolution
-          ? {
-              originAreaCode: input.resolution.originAreaCode,
-              content: input.resolution.originContent,
-            }
-          : null,
-      }).catch((error): OriginResolution => {
-        warnings.push(`원산지 해석 실패: ${message(error)}`);
-        return {
-          resolved: false,
-          needsReview: true,
-          reviewReason: "원산지 해석 중 오류",
-          countryLabel: null,
-          domestic: false,
-          originAreaInfo: null,
-          source: "label",
-          warnings: [],
-        };
-      }),
+      noticePromise,
+      kcPromise,
+      originPromise,
       pricePromise,
       titleTagsPromise,
-      (category.categoryId
-        ? analyzeProductAttributes({
-            categoryId: category.categoryId,
-            productTitle: draft.title,
-            productGroup: draft.categoryQuery,
-            summary: draft.summary,
-            specFacts: draft.specFacts,
-            labelTexts: draft.labelTexts,
-          })
-        : Promise.resolve(emptyAttributes)
-      ).catch(() => emptyAttributes),
+      attributesPromise,
       input.imageSuitePromise,
       planPanelsPromise,
     ]);
@@ -456,13 +559,21 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     ...planPanels.panelWarnings,
   );
 
+  /* 즉시할인은 pricePromise 안에서 이미 확정됐다 — 계산 지점은 여전히 한 곳뿐이다. */
+
   timings.materials = Date.now() - materialsStartedAt;
+  // 개별 재료는 위에서 이미 방송됐다. 이 밀스톤은 **요약이자 백스톱**이다 —
+  // 개별 방송을 놓친 클라이언트(늦은 접속·재연결)도 여기서 전부 복구한다.
   await onEvent("재료 생산 완료", {
     noticeType: notice.noticeType,
     kcStatus: kc.status,
     originResolved: origin.resolved && !origin.needsReview,
     salePrice: price.salePrice,
+    listPrice: price.listPrice ?? price.salePrice,
+    discountKrw: price.discountKrw ?? 0,
+    discountRate: price.discountRate ?? 0,
     tagCount: titleTags.tagResult.tags.length,
+    tags: titleTags.tagResult.tags.map((tag) => tag.text),
     // 확정된 상품명을 싣는다 — SEO 파이프라인이 무너져도 null 이 나가지 않는다.
     seoTitle: titleTags.resolvedTitle,
     titleStrategy: titleTags.seoResult.strategy,
@@ -704,7 +815,7 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
     isLive: liveNow,
     title: registrationTitle,
     category,
-    salePrice,
+    salePrice: price.listPrice ?? salePrice,
     stockQuantity: draft.stockQuantity > 0 ? draft.stockQuantity : config.product.stockQuantityDefault,
     representativeImageUrl,
     optionalImageUrls,
@@ -752,6 +863,8 @@ export async function orchestrateListing(input: OrchestratorInput): Promise<void
       optionalImageUrls,
       detailContent: detail.html,
       salePrice,
+      listPrice: price.listPrice,
+      discountKrw: price.discountKrw,
       stockQuantity,
       config,
       notice: notice.payload,
