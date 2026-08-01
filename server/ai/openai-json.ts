@@ -106,6 +106,20 @@ export function softMaxString(max: number) {
   return z.string().transform((value) => clipText(value, max));
 }
 
+/**
+ * 목록 길이의 상한 — 문자열과 같은 이유로 **자르되 버리지 않는다**.
+ *
+ * 실측으로 이것도 터졌다: 상품명 분해의 `expressions` 가 6개 상한을 한 칸 넘겨
+ * 분해 전체가 거부됐고, 그 런은 SEO 상품명 대신 에이전트 평문 제목으로 등록됐다.
+ * "몇 개까지"는 취향이고, 최소 개수(`min`)와 항목의 모양이 계약이다.
+ */
+export function softMaxArray<T extends z.ZodTypeAny>(item: T, max: number, min = 0) {
+  return z
+    .array(item)
+    .min(min)
+    .transform((values) => values.slice(0, max));
+}
+
 /** 문장 끝 → 어절 끝 순으로 물러나며 자른다. 너무 많이 잘려 나가면 그냥 상한에서 끊는다. */
 export function clipText(value: string, max: number): string {
   const text = value.trim();

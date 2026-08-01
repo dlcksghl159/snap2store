@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { requestOpenAiJson, strictObject } from "../ai/openai-json.js";
+import { requestOpenAiJson, softMaxArray, softMaxString, strictObject } from "../ai/openai-json.js";
 import { normalizeKeyword, researchKeywordVolumes } from "../naver/searchad.js";
 import { repairTitle, validateTitle } from "./title-gate.js";
 import type { SeoTitleResult, ShoppingSearchItem, SpecFact } from "../../src/domain/types";
@@ -10,12 +10,18 @@ const MAX_RESEARCH_EXPRESSIONS = 15;
 
 /* ── ① 분해 ─────────────────────────────────────────────────── */
 
+/*
+  ⚠ 길이·개수 상한은 전부 soft 다.
+  실측으로 `expressions` 가 6개 상한을 한 칸 넘겨 **분해 전체**가 거부됐고, 그 런은
+  SEO 상품명 대신 에이전트 평문 제목("화이트 수납형 일자 책상세트")으로 등록됐다.
+  계약은 유닛의 모양(kind·importance·표현 1개 이상)이지 "몇 개까지"가 아니다.
+*/
 const UnitSchema = z.object({
-  kind: z.string().max(40),
+  kind: softMaxString(40),
   importance: z.enum(["primary", "secondary", "optional"]),
-  expressions: z.array(z.string().max(40)).min(1).max(6),
+  expressions: softMaxArray(softMaxString(40), 6, 1),
 });
-const DecompositionSchema = z.object({ units: z.array(UnitSchema).min(1).max(10) });
+const DecompositionSchema = z.object({ units: softMaxArray(UnitSchema, 10, 1) });
 
 const DECOMPOSITION_JSON_SCHEMA = strictObject({
   units: {
@@ -44,15 +50,16 @@ const DECOMPOSITION_SYSTEM = `당신은 네이버 스마트스토어 상품명 �
 - 숫자·단위·수량은 정확히 보존합니다 (예: "2단"을 "3단"으로 바꾸지 않습니다).
 - 각 표현은 공백 없는 단일 토큰이거나 짧은 명사구입니다.`;
 
+/* 후보 수도 soft — 아래 채점부는 맵·필터로만 쓰고 개수에 의존하지 않는다. */
 const CandidateSchema = z.object({
-  candidates: z
-    .array(
-      z.object({
-        strategy: z.enum(["accuracy", "balanced", "conversion"]),
-        title: z.string().max(60),
-      }),
-    )
-    .length(3),
+  candidates: softMaxArray(
+    z.object({
+      strategy: z.enum(["accuracy", "balanced", "conversion"]),
+      title: softMaxString(60),
+    }),
+    4,
+    1,
+  ),
 });
 
 const CANDIDATE_JSON_SCHEMA = strictObject({

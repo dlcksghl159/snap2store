@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { clipText, softMaxString } from "../server/ai/openai-json.js";
+import { clipText, softMaxArray, softMaxString } from "../server/ai/openai-json.js";
 
 /**
  * OpenAI 구조화 출력의 JSON Schema 는 `maxLength` 를 강제하지 않는다 — 글자수는
@@ -51,6 +51,43 @@ describe("softMaxString — 길이 초과는 자르되 버리지 않는다", () 
     });
     expect(() => Plan.parse({ role: "unknown", sections: [{ body: "a" }, { body: "b" }] })).toThrow();
     expect(() => Plan.parse({ role: "hook", sections: [{ body: "a" }] })).toThrow();
+  });
+});
+
+describe("softMaxArray — 개수 초과도 자르되 버리지 않는다", () => {
+  it("상한 이하는 그대로 통과한다", () => {
+    expect(softMaxArray(z.string(), 6).parse(["a", "b"])).toEqual(["a", "b"]);
+  });
+
+  it("초과분만 잘라 낸다 — 실측으로 이게 상품명 분해 전체를 죽였다", () => {
+    const schema = softMaxArray(z.string(), 6, 1);
+    const parsed = schema.parse(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    expect(parsed).toEqual(["1", "2", "3", "4", "5", "6"]);
+  });
+
+  it("최소 개수는 하드 계약으로 남는다 — 빈 목록은 거부한다", () => {
+    expect(() => softMaxArray(z.string(), 6, 1).parse([])).toThrow();
+  });
+
+  it("항목 스키마 위반은 그대로 거부한다", () => {
+    expect(() => softMaxArray(z.string(), 6, 1).parse([1, 2])).toThrow();
+  });
+
+  it("중첩해도 동작한다 — 유닛 목록 안의 표현 목록", () => {
+    const Unit = z.object({
+      importance: z.enum(["primary", "secondary"]),
+      expressions: softMaxArray(softMaxString(4), 2, 1),
+    });
+    const Decomposition = z.object({ units: softMaxArray(Unit, 2, 1) });
+    const parsed = Decomposition.parse({
+      units: [
+        { importance: "primary", expressions: ["가나다라마바", "b", "c", "d"] },
+        { importance: "secondary", expressions: ["e"] },
+        { importance: "secondary", expressions: ["f"] },
+      ],
+    });
+    expect(parsed.units).toHaveLength(2);
+    expect(parsed.units[0].expressions).toEqual(["가나다라", "b"]);
   });
 });
 
